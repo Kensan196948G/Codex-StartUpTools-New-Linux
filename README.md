@@ -24,6 +24,7 @@
 | ✅ | 自律モード | `--full-auto` + `cto-autonomous` |
 | ✅ | Supervisor適用 | 番号付き個別選択、preview、`yes` 確認 |
 | ✅ | Supervisorレポート | 登録プロジェクトの `Managed / Missing / Foreign / Invalid` 集計 |
+| ✅ | Supervisor差分表示 | 上書き前に既存manifestとの差分を表示 |
 | 🚫 | SSH接続 | 削除。ローカルプロジェクト起動のみ |
 | 🚫 | Claude / Copilot起動 | 対象外 |
 | 🧑 | 人間判断 | `final-choice`, `merge`, `release`, public化 |
@@ -101,11 +102,34 @@ flowchart LR
     A["📁 登録プロジェクト候補"] --> B["🔢 番号付き一覧"]
     B --> C["👤 人間が対象選択"]
     C --> D["👀 Preview"]
-    D --> E{"✅ yes?"}
-    E -- "yes" --> F["🛡️ .codex/supervisor.json 書込"]
-    E -- "no" --> G["⏹️ キャンセル"]
-    F --> H["📋 Supervisorレポートで確認"]
+    D --> E["🔍 Diff表示"]
+    E --> F{"✅ yes?"}
+    F -- "yes" --> G["🛡️ .codex/supervisor.json 書込"]
+    F -- "no" --> H["⏹️ キャンセル"]
+    G --> I["📋 Supervisorレポートで確認"]
 ```
+
+### 🔍 更新差分表示
+
+Supervisor適用前のpreviewでは、既存manifestがある場合にポリシー差分を表示します。`supervisorAppliedAt` は更新時に必ず変わるため、ポリシー差分からは分離して扱います。
+
+```mermaid
+flowchart TD
+    A["👀 Preview"] --> B{"既存manifestあり?"}
+    B -->|なし| C["🆕 create"]
+    B -->|あり| D{"JSON読込OK?"}
+    D -->|no| E["🔴 replace invalid"]
+    D -->|yes| F{"ポリシー差分あり?"}
+    F -->|yes| G["🟡 update<br/>current -> desired"]
+    F -->|no| H["🕘 refresh timestamp"]
+```
+
+| アクション | 表示内容 |
+|---|---|
+| 🆕 `create` | 新規manifest作成予定 |
+| 🟡 `update` | `property: current -> desired` の差分 |
+| 🔴 `replace invalid` | 不正JSONを置換する予定とparse error |
+| 🕘 `refresh timestamp` | ポリシー変更なし、適用日時のみ更新 |
 
 ### 📋 v0.2.0 Supervisorレポート
 
@@ -188,14 +212,14 @@ timeline
     title Release Roadmap
     v0.1.0 : 初期Linux Codexスタートツール
     v0.1.1 : Supervisor少数実適用と安定化
-    v0.2.0 : Supervisorレポート / 差分表示 / 除外UI / リリース前チェック統合
+    v0.2.0 : Supervisorレポート / 更新差分表示 / 除外UI / リリース前チェック統合
 ```
 
 | バージョン | 状態 | 内容 |
 |---|---|---|
 | ✅ `v0.1.0` | 完了 | Linuxローカル起動MVP |
 | ✅ `v0.1.1` | 完了 | Supervisor少数適用、運用安定化 |
-| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポートから開始 |
+| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示 |
 
 ## 🔐 安全運用ルール
 

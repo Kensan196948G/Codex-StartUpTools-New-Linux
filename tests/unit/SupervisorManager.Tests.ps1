@@ -61,6 +61,26 @@ Describe "Set-SupervisorForProject" {
         $manifest.sshEnabled | Should -BeFalse
         $manifest.humanDecisionRequired | Should -Contain "merge"
     }
+
+    It "PreviewOnly で既存 manifest との差分を返す" {
+        $project = Join-Path $TestDrive "ForeignProject"
+        $codexDir = Join-Path $project ".codex"
+        New-Item -ItemType Directory -Path $codexDir -Force | Out-Null
+        @{
+            managedBy   = "OtherTool"
+            mode        = "external"
+            codexOnly   = $false
+            sshEnabled  = $true
+        } | ConvertTo-Json | Set-Content -Path (Join-Path $codexDir "supervisor.json") -Encoding UTF8
+
+        $result = Set-SupervisorForProject -ProjectPath $project -Config (New-TestSupervisorConfig -Root $TestDrive) -PreviewOnly
+
+        $result.applied | Should -BeFalse
+        $result.action | Should -Be "Update"
+        $result.changeCount | Should -BeGreaterThan 0
+        ($result.changes | Where-Object property -eq "managedBy").desired | Should -Be "Codex-StartUpTools-New-Linux"
+        ($result.changes | Where-Object property -eq "sshEnabled").desired | Should -Be "false"
+    }
 }
 
 Describe "Set-SupervisorForRegisteredProjects" {
@@ -109,5 +129,63 @@ Describe "Get-SupervisorReport" {
         ($report.entries | Where-Object project -eq "MissingProject").status | Should -Be "Missing"
         ($report.entries | Where-Object project -eq "ForeignProject").status | Should -Be "Foreign"
         ($report.entries | Where-Object project -eq "InvalidProject").status | Should -Be "Invalid"
+    }
+}
+
+Describe "Get-SupervisorManifestDiff" {
+    It "未適用プロジェクトは Create として返す" {
+        $project = Join-Path $TestDrive "NewProject"
+        New-Item -ItemType Directory -Path $project -Force | Out-Null
+
+        $diff = Get-SupervisorManifestDiff -ProjectPath $project -Config (New-TestSupervisorConfig -Root $TestDrive)
+
+        $diff.action | Should -Be "Create"
+        $diff.exists | Should -BeFalse
+        $diff.changeCount | Should -Be 0
+    }
+
+    It "同一ポリシーの managed manifest は timestamp refresh として返す" {
+        $project = Join-Path $TestDrive "ManagedProject"
+        New-Item -ItemType Directory -Path $project -Force | Out-Null
+        Set-SupervisorForProject -ProjectPath $project -Config (New-TestSupervisorConfig -Root $TestDrive) | Out-Null
+
+        $diff = Get-SupervisorManifestDiff -ProjectPath $project -Config (New-TestSupervisorConfig -Root $TestDrive)
+
+        $diff.action | Should -Be "RefreshTimestamp"
+        $diff.changeCount | Should -Be 0
+        $diff.timestampWillRefresh | Should -BeTrue
+    }
+
+    It "外部管理 manifest は変更差分を返す" {
+        $project = Join-Path $TestDrive "ForeignProject"
+        $codexDir = Join-Path $project ".codex"
+        New-Item -ItemType Directory -Path $codexDir -Force | Out-Null
+        @{
+            managedBy   = "OtherTool"
+            mode        = "external"
+            codexOnly   = $false
+            sshEnabled  = $true
+        } | ConvertTo-Json | Set-Content -Path (Join-Path $codexDir "supervisor.json") -Encoding UTF8
+
+        $diff = Get-SupervisorManifestDiff -ProjectPath $project -Config (New-TestSupervisorConfig -Root $TestDrive)
+
+        $diff.action | Should -Be "Update"
+        ($diff.changes | Where-Object property -eq "managedBy").current | Should -Be "OtherTool"
+        ($diff.changes | Where-Object property -eq "managedBy").desired | Should -Be "Codex-StartUpTools-New-Linux"
+        ($diff.changes | Where-Object property -eq "codexOnly").current | Should -Be "false"
+        ($diff.changes | Where-Object property -eq "codexOnly").desired | Should -Be "true"
+    }
+
+    It "不正JSONは ReplaceInvalid として返す" {
+        $project = Join-Path $TestDrive "InvalidProject"
+        $codexDir = Join-Path $project ".codex"
+        New-Item -ItemType Directory -Path $codexDir -Force | Out-Null
+        "{ invalid json" | Set-Content -Path (Join-Path $codexDir "supervisor.json") -Encoding UTF8
+
+        $diff = Get-SupervisorManifestDiff -ProjectPath $project -Config (New-TestSupervisorConfig -Root $TestDrive)
+
+        $diff.action | Should -Be "ReplaceInvalid"
+        $diff.parseError | Should -Not -BeNullOrEmpty
+        $diff.changeCount | Should -Be 0
     }
 }

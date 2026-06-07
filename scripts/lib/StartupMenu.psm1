@@ -566,7 +566,28 @@ function Invoke-SupervisorAction {
         Write-Host ""
         Write-Host "  適用予定:" -ForegroundColor Cyan
         $preview | ForEach-Object {
-            Write-Host ("    {0} -> {1}" -f $_.project, $_.target) -ForegroundColor Cyan
+            $actionLabel = switch ($_.action) {
+                "Create" { "create" }
+                "Update" { "update" }
+                "ReplaceInvalid" { "replace invalid" }
+                "RefreshTimestamp" { "refresh timestamp" }
+                default { "$($_.action)".ToLowerInvariant() }
+            }
+            Write-Host ("    {0} -> {1} [{2}]" -f $_.project, $_.target, $actionLabel) -ForegroundColor Cyan
+            if ($_.parseError) {
+                Write-Host ("      invalid JSON: {0}" -f $_.parseError) -ForegroundColor Red
+            }
+            elseif ($_.changeCount -gt 0) {
+                $_.changes | ForEach-Object {
+                    Write-Host ("      - {0}: {1} -> {2}" -f $_.property, $_.current, $_.desired) -ForegroundColor Yellow
+                }
+            }
+            elseif ($_.timestampWillRefresh) {
+                Write-Host "      - policy change: none (supervisorAppliedAt will refresh)" -ForegroundColor DarkYellow
+            }
+            else {
+                Write-Host "      - new supervisor manifest" -ForegroundColor Yellow
+            }
         }
 
         $answer = (Read-Host "  選択した候補へ適用しますか? (yes/no)").Trim().ToLowerInvariant()

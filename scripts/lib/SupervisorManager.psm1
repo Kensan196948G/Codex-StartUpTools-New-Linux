@@ -114,6 +114,117 @@ function New-SupervisorManifest {
     }
 }
 
+function Convert-SupervisorDiffValue {
+    [CmdletBinding()]
+    [OutputType([System.String])]
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return "(missing)"
+    }
+
+    if ($Value -is [System.Array]) {
+        return (@($Value) | ForEach-Object { "$_" }) -join ","
+    }
+
+    if ($Value -is [bool]) {
+        return "$Value".ToLowerInvariant()
+    }
+
+    return "$Value"
+}
+
+function Get-SupervisorManifestDiff {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ProjectPath,
+
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    if (-not (Test-Path $ProjectPath)) {
+        throw "プロジェクトディレクトリが見つかりません: $ProjectPath"
+    }
+
+    $projectName = Split-Path -Leaf $ProjectPath
+    $codexDir = Join-Path $ProjectPath ".codex"
+    $manifestPath = Join-Path $codexDir "supervisor.json"
+    $desired = New-SupervisorManifest -Config $Config -ProjectName $projectName
+    $current = $null
+    $parseError = ""
+    $exists = Test-Path $manifestPath
+
+    if ($exists) {
+        try {
+            $current = Get-Content -Path $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            $parseError = "$_"
+        }
+    }
+
+    $changes = [System.Collections.Generic.List[object]]::new()
+    $policyKeys = @(
+        "schemaVersion",
+        "project",
+        "managedBy",
+        "mode",
+        "agentLoop",
+        "codexOnly",
+        "sshEnabled",
+        "humanDecisionRequired"
+    )
+
+    if ($exists -and -not $parseError) {
+        foreach ($key in $policyKeys) {
+            $currentValue = if ($current.PSObject.Properties[$key]) { $current.PSObject.Properties[$key].Value } else { $null }
+            $desiredValue = if ($desired.PSObject.Properties[$key]) { $desired.PSObject.Properties[$key].Value } else { $null }
+            $currentText = Convert-SupervisorDiffValue -Value $currentValue
+            $desiredText = Convert-SupervisorDiffValue -Value $desiredValue
+            if ($currentText -ne $desiredText) {
+                $changeType = if ($null -eq $currentValue) { "Added" } elseif ($null -eq $desiredValue) { "Removed" } else { "Changed" }
+                $changes.Add([pscustomobject]@{
+                        property = $key
+                        current  = $currentText
+                        desired  = $desiredText
+                        type     = $changeType
+                    })
+            }
+        }
+    }
+
+    $action = if (-not $exists) {
+        "Create"
+    }
+    elseif ($parseError) {
+        "ReplaceInvalid"
+    }
+    elseif ($changes.Count -gt 0) {
+        "Update"
+    }
+    else {
+        "RefreshTimestamp"
+    }
+
+    return [pscustomobject]@{
+        project              = $projectName
+        path                 = $ProjectPath
+        target               = $manifestPath
+        exists               = $exists
+        action               = $action
+        changeCount          = $changes.Count
+        changes              = @($changes)
+        parseError           = $parseError
+        timestampWillRefresh = $exists -and -not $parseError
+    }
+}
+
 function Set-SupervisorForProject {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseShouldProcessForStateChangingFunctions", "", Justification = "Used by local supervisor bootstrap automation.")]
@@ -136,6 +247,7 @@ function Set-SupervisorForProject {
     $manifest = New-SupervisorManifest -Config $Config -ProjectName $projectName
     $codexDir = Join-Path $ProjectPath ".codex"
     $manifestPath = Join-Path $codexDir "supervisor.json"
+    $diff = Get-SupervisorManifestDiff -ProjectPath $ProjectPath -Config $Config
 
     if (-not $PreviewOnly) {
         if (-not (Test-Path $codexDir)) {
@@ -145,10 +257,15 @@ function Set-SupervisorForProject {
     }
 
     return [pscustomobject]@{
-        project = $projectName
-        path    = $ProjectPath
-        target  = $manifestPath
-        applied = -not $PreviewOnly
+        project              = $projectName
+        path                 = $ProjectPath
+        target               = $manifestPath
+        applied              = -not $PreviewOnly
+        action               = $diff.action
+        changes              = @($diff.changes)
+        changeCount          = $diff.changeCount
+        parseError           = $diff.parseError
+        timestampWillRefresh = $diff.timestampWillRefresh
     }
 }
 
@@ -212,8 +329,8 @@ function Get-SupervisorStatusForProject {
     $managedBy = if ($manifest -and $manifest.PSObject.Properties["managedBy"]?.Value) { "$($manifest.managedBy)" } else { "" }
     $mode = if ($manifest -and $manifest.PSObject.Properties["mode"]?.Value) { "$($manifest.mode)" } else { "" }
     $appliedAt = if ($manifest -and $manifest.PSObject.Properties["supervisorAppliedAt"]?.Value) { "$($manifest.supervisorAppliedAt)" } else { "" }
-    $codexOnly = if ($manifest -and $manifest.PSObject.Properties["codexOnly"]?.Value -ne $null) { [bool]$manifest.codexOnly } else { $false }
-    $sshEnabled = if ($manifest -and $manifest.PSObject.Properties["sshEnabled"]?.Value -ne $null) { [bool]$manifest.sshEnabled } else { $false }
+    $codexOnly = if ($manifest -and $null -ne $manifest.PSObject.Properties["codexOnly"]?.Value) { [bool]$manifest.codexOnly } else { $false }
+    $sshEnabled = if ($manifest -and $null -ne $manifest.PSObject.Properties["sshEnabled"]?.Value) { [bool]$manifest.sshEnabled } else { $false }
 
     $status = if (-not $exists) {
         "Missing"
@@ -274,6 +391,7 @@ function Get-SupervisorReport {
 Export-ModuleMember -Function @(
     "Get-RegisteredProjectRoot",
     "Get-RegisteredProjectCandidate",
+    "Get-SupervisorManifestDiff",
     "Get-SupervisorReport",
     "Get-SupervisorStatusForProject",
     "New-SupervisorManifest",
