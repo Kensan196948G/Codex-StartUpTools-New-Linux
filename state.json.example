@@ -1,0 +1,28 @@
+{
+  "goal": {
+    "title": "Linux Codex startup execution"
+  },
+  "execution": {
+    "phase": "Monitor",
+    "max_duration_minutes": 300
+  },
+  "token": {
+    "total_budget": 100,
+    "used": 0,
+    "remaining": 100,
+    "allocation": {
+      "monitor": 10,
+      "development": 35,
+      "verify": 25,
+      "improvement": 10,
+      "debug": 20
+    },
+    "dynamic_mode": true,
+    "current_phase_budget": 0,
+    "current_phase_used": 0
+  },
+  "message_bus": {
+    "phase.transition": [],
+    "ci.status": []
+  }
+}

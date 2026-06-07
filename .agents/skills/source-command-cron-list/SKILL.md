@@ -1,0 +1,21 @@
+---
+name: "source-command-cron-list"
+description: "現在の CLAUDEOS Cron エントリ一覧を表示する"
+---
+
+# source-command-cron-list
+
+Use this skill when the user asks to run the migrated source command `cron-list`.
+
+## Command Template
+
+# /cron-list — Cron エントリ一覧
+
+```bash
+crontab -l 2>/dev/null | awk '
+  /^# CLAUDEOS:/ { print; getline; print; print "" }
+'
+```
+
+出力があれば表形式で整形してユーザーへ報告してください。
+出力が無ければ「登録済みの CLAUDEOS エントリはありません」と伝えてください。

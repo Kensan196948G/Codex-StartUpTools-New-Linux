@@ -1,0 +1,60 @@
+{
+  "_comment": "Linux Codex startup tools config template",
+  "version": "1.0.0",
+  "projectsDir": "/home/kensan/Projects",
+  "registeredProjects": {
+    "enabled": true,
+    "roots": [
+      "/home/kensan/Projects"
+    ],
+    "include": [],
+    "exclude": [],
+    "maxCandidates": 80
+  },
+  "tools": {
+    "defaultTool": "codex",
+    "codex": {
+      "enabled": true,
+      "command": "codex",
+      "args": [
+        "--full-auto"
+      ],
+      "installCommand": "npm install -g @openai/codex",
+      "env": {
+        "OPENAI_API_KEY": ""
+      },
+      "apiKeyEnvVar": "OPENAI_API_KEY"
+    }
+  },
+  "supervisor": {
+    "enabled": true,
+    "applyToRegisteredProjects": true,
+    "mode": "cto-autonomous",
+    "humanDecisionRequired": [
+      "final-choice",
+      "merge",
+      "release"
+    ]
+  },
+  "logging": {
+    "enabled": true,
+    "logDir": "logs",
+    "logPrefix": "codex-startup-linux",
+    "successKeepDays": 30,
+    "failureKeepDays": 90
+  },
+  "backupConfig": {
+    "enabled": true,
+    "backupDir": "config/backups",
+    "maxBackups": 10,
+    "maskSensitive": true,
+    "sensitiveKeys": [
+      "tools.codex.env.OPENAI_API_KEY"
+    ]
+  },
+  "recentProjects": {
+    "enabled": true,
+    "maxHistory": 20,
+    "historyFile": "/home/kensan/.codex-startup/recent-projects.json"
+  }
+}

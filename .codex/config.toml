@@ -1,0 +1,41 @@
+[mcp_servers.context7]
+args = [
+    "-y",
+    "@upstash/context7-mcp@latest",
+]
+command = "npx"
+env_vars = ["CONTEXT7_API_KEY"]
+
+[mcp_servers.github]
+args = [
+    "-y",
+    "@anthropic/mcp-server-github",
+]
+command = "npx"
+env_vars = ["GITHUB_TOKEN"]
+
+[mcp_servers.sequential-thinking]
+args = [
+    "-y",
+    "@modelcontextprotocol/server-sequential-thinking",
+]
+command = "npx"
+
+[migration]
+mode = "incremental"
+source_repo = "https://github.com/Kensan196948G/Codex-StartUpTools-New-Windows.git"
+
+[project]
+name = "Codex-StartUpTools-New-Linux"
+purpose = "Linux Codex startup tools with registered project supervision"
+
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+ENABLE_PROMPT_CACHING_1H = "1"
+ENABLE_TOOL_SEARCH = "true"
+
+[verification]
+require_docs = true
+require_tests_for_scripts = true

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Kensan196948G/Codex-StartUpTools-New-Linux/main/state.schema.json",
+  "title": "Codex StartUp state.json",
+  "description": "Reduced runtime state for Codex-native startup flows. This schema intentionally keeps only the fields required by currently migrated modules.",
+  "type": "object",
+  "required": [
+    "goal",
+    "execution",
+    "token",
+    "message_bus"
+  ],
+  "properties": {
+    "goal": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "phase"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_duration_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "token": {
+      "type": "object",
+      "required": [
+        "total_budget",
+        "used",
+        "remaining",
+        "allocation",
+        "dynamic_mode",
+        "current_phase_budget",
+        "current_phase_used"
+      ],
+      "properties": {
+        "total_budget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used": {
+          "type": "number",
+          "minimum": 0
+        },
+        "remaining": {
+          "type": "number",
+          "minimum": 0
+        },
+        "allocation": {
+          "type": "object",
+          "required": [
+            "monitor",
+            "development",
+            "verify",
+            "improvement",
+            "debug"
+          ],
+          "properties": {
+            "monitor": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "development": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "verify": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "improvement": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "debug": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": true
+        },
+        "dynamic_mode": {
+          "type": "boolean"
+        },
+        "current_phase": {
+          "type": "string"
+        },
+        "current_phase_budget": {
+          "type": "number",
+          "minimum": 0
+        },
+        "current_phase_used": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "message_bus": {
+      "type": "object",
+      "required": [
+        "phase.transition",
+        "ci.status"
+      ],
+      "properties": {
+        "phase.transition": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              },
+              "publisher": {
+                "type": "string"
+              },
+              "payload": {},
+              "consumed_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "timestamp",
+              "publisher",
+              "payload",
+              "consumed_by"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "ci.status": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              },
+              "publisher": {
+                "type": "string"
+              },
+              "payload": {},
+              "consumed_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "timestamp",
+              "publisher",
+              "payload",
+              "consumed_by"
+            ],
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

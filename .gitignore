@@ -1,0 +1,26 @@
+# Reference folders (not part of this project)
+Claude-StartUp/
+Claude-StartUp-BackUp/
+
+# Local Claude Code configuration
+.claude/
+.mcp.json
+CLAUDE.md
+
+# Runtime state (generated at startup)
+state.json
+
+# Local runtime config (generated from template)
+config/config.json
+
+# Test artifacts
+testResults.xml
+
+# Logs (generated at runtime)
+logs/
+
+# Config backups (generated at runtime)
+config/backups/
+
+# Recent projects history (per-user)
+.codex-startup/

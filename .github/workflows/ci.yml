@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: Pester Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck
+
+      - name: Run Unit Tests
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.0 -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = "tests/unit"
+          $config.Run.PassThru = $true
+          $config.Output.Verbosity = "Detailed"
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = "testResults.xml"
+          $config.TestResult.OutputFormat = "NUnitXml"
+          $result = Invoke-Pester -Configuration $config
+          if ($result.FailedCount -gt 0) {
+            Write-Error "Tests failed: $($result.FailedCount) failure(s)"
+            exit 1
+          }
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: testResults.xml
+
+  lint:
+    name: PowerShell Lint (PSScriptAnalyzer)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force -SkipPublisherCheck
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path scripts/ -Recurse -Severity Error,Warning
+          if ($results.Count -gt 0) {
+            $results | Format-Table -AutoSize
+            Write-Warning "$($results.Count) PSScriptAnalyzer finding(s)"
+          } else {
+            Write-Host "PSScriptAnalyzer: No issues found" -ForegroundColor Green
+          }
+
+  schema-validation:
+    name: Schema Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate state.json.example
+        shell: pwsh
+        run: |
+          $example = Get-Content state.json.example -Raw | ConvertFrom-Json
+          $schema  = Get-Content state.schema.json  -Raw | ConvertFrom-Json
+          Write-Host "state.json.example is valid JSON" -ForegroundColor Green
+
+      - name: Validate config template
+        shell: pwsh
+        run: |
+          $config = Get-Content config/config.json.template -Raw | ConvertFrom-Json
+          Write-Host "config.json.template is valid JSON" -ForegroundColor Green
+
+  architecture-check:
+    name: Architecture Check (scripts/)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run ArchitectureCheck
+        shell: pwsh
+        run: |
+          Import-Module ./scripts/lib/ArchitectureCheck.psm1 -Force
+          $result = Invoke-ArchitectureCheck -Path './scripts'
+          Write-Host ("Files checked : {0}" -f $result.CheckedFiles)
+          Write-Host ("CRITICAL      : {0}" -f $result.CriticalCount)
+          Write-Host ("WARNING       : {0}" -f $result.WarningCount)
+          Write-Host ("Passed        : {0}" -f $result.Passed)
+          if ($result.Violations.Count -gt 0) {
+            $result.Violations | Select-Object RuleId,Severity,File,Line | Format-Table -AutoSize
+          }
+          if (-not $result.Passed) {
+            Write-Error "ArchitectureCheck FAILED: $($result.CriticalCount) CRITICAL violation(s)"
+            exit 1
+          }
+          Write-Host "ArchitectureCheck PASSED" -ForegroundColor Green
+
+      - name: Verify module dependencies
+        shell: pwsh
+        run: |
+          Import-Module ./scripts/lib/ArchitectureCheck.psm1 -Force
+          $results = @(Test-ModuleDependency -Path '.')
+          if ($results.Count -gt 0) {
+            $results | Format-Table -AutoSize
+            $missing = @($results | Where-Object { $_.Status -eq "MISSING" })
+            if ($missing.Count -gt 0) {
+              Write-Warning "$($missing.Count) module dependency issue(s) found"
+            }
+          }
+          Write-Host "Module dependency check complete" -ForegroundColor Green
