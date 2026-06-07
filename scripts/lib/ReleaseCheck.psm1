@@ -1,5 +1,8 @@
 Set-StrictMode -Version Latest
 
+Import-Module (Join-Path $PSScriptRoot "Config.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "ArchitectureCheck.psm1") -Force
+
 function New-ReleaseCheckResult {
     [CmdletBinding()]
     [OutputType([System.Object])]
@@ -127,16 +130,21 @@ function Invoke-ReleasePesterCheck {
         [string]$ProjectRoot
     )
 
-    try {
-        Import-Module Pester -MinimumVersion 5.0 -Force -ErrorAction Stop
-        $result = Invoke-Pester -Path (Join-Path $ProjectRoot "tests/unit") -Output Normal -PassThru
-        $ok = $result.FailedCount -eq 0
-        $detail = "passed={0}; failed={1}; total={2}" -f $result.PassedCount, $result.FailedCount, $result.TotalCount
-        return New-ReleaseCheckResult -Name "Pester unit tests" -Ok $ok -Detail $detail -Category "test"
+    $testPath = Join-Path $ProjectRoot "tests/unit"
+    $command = @"
+Import-Module Pester -MinimumVersion 5.0 -Force
+`$result = Invoke-Pester -Path '$testPath' -Output Normal -PassThru
+if (`$result.FailedCount -gt 0) { exit 1 }
+exit 0
+"@
+
+    $output = & pwsh -NoProfile -Command $command 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) {
+        return New-ReleaseCheckResult -Name "Pester unit tests" -Ok $true -Detail "passed" -Category "test"
     }
-    catch {
-        return New-ReleaseCheckResult -Name "Pester unit tests" -Ok $false -Detail "$_" -Category "test"
-    }
+
+    return New-ReleaseCheckResult -Name "Pester unit tests" -Ok $false -Detail (($output | Select-Object -Last 8) -join " ") -Category "test"
 }
 
 function Invoke-ReleaseArchitectureCheck {
