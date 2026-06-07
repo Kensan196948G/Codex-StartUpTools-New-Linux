@@ -45,6 +45,7 @@
 | `9` | 📋 | Supervisorレポート | 登録プロジェクトの適用状況を一覧化 |
 | `10` | 📨 | MessageBusログ | フェーズ遷移ログを確認 |
 | `11` | 🗂️ | プロジェクト候補管理 | 登録候補の除外・カテゴリを番号で管理 |
+| `12` | ✅ | リリース前チェック | Pester / Architecture / DryRun / README / Git状態を統合確認 |
 
 ## 🧩 全体アーキテクチャ
 
@@ -242,7 +243,37 @@ pwsh scripts/main/Start-CodexBootstrap.ps1 -DryRun
 pwsh -NoProfile -Command 'Import-Module Pester -MinimumVersion 5.0 -Force; Invoke-Pester -Path tests/unit -Output Normal'
 pwsh -NoProfile -Command 'Import-Module ./scripts/lib/ArchitectureCheck.psm1 -Force; Invoke-ArchitectureCheck -Path ./scripts'
 pwsh -NoProfile -File scripts/main/Start-Codex.ps1 -Project Codex-StartUpTools-New-Linux -DryRun -NonInteractive
+pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1
 ```
+
+## ✅ リリース前チェック統合コマンド
+
+`scripts/main/Invoke-ReleaseCheck.ps1` は、v0.2.0以降の人間リリース判断前に実行する統合ゲートです。開発中の確認だけなら `-AllowDirty` を付けられますが、正式リリース前はdirty worktreeを失敗として扱います。
+
+```mermaid
+flowchart TD
+    A["✅ Invoke-ReleaseCheck.ps1"] --> B["🧪 Pester"]
+    A --> C["🏗️ ArchitectureCheck"]
+    A --> D["🚀 Codex DryRun"]
+    A --> E["📘 README正本確認"]
+    A --> F["⚙️ config template確認"]
+    A --> G["🔐 .gitignore runtime除外確認"]
+    A --> H["🌿 Git worktree clean確認"]
+    B --> I{"👤 Human release decision"}
+    C --> I
+    D --> I
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+```
+
+| コマンド | 用途 |
+|---|---|
+| `pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1` | 正式なリリース前チェック |
+| `pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1 -AllowDirty` | 開発中の暫定確認 |
+| `pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1 -SkipPester -SkipDryRun -AllowDirty` | 軽量な設定・文書・Git確認 |
+| `pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1 -Json` | JSON形式の結果出力 |
 
 ## 🧾 リリース履歴と次フェーズ
 
@@ -258,7 +289,7 @@ timeline
 |---|---|---|
 | ✅ `v0.1.0` | 完了 | Linuxローカル起動MVP |
 | ✅ `v0.1.1` | 完了 | Supervisor少数適用、運用安定化 |
-| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI |
+| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI、リリース前チェック統合 |
 
 ## 🔐 安全運用ルール
 

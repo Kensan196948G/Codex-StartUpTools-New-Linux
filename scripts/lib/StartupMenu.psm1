@@ -120,6 +120,14 @@ function Get-MenuItems {
         Action  = 'project-candidates'
         Enabled = $Config.registeredProjects.enabled -eq $true
     })
+    $items.Add([pscustomobject]@{
+        Key     = '12'
+        Label   = "リリース前チェック"
+        Note    = "Pester / Architecture / DryRun / README / Git状態を統合確認"
+        Section = $null
+        Action  = 'release-check'
+        Enabled = $true
+    })
 
     # --- 終了 ---
     $items.Add([pscustomobject]@{
@@ -317,6 +325,9 @@ function Invoke-MenuAction {
         'project-candidates' {
             Invoke-ProjectCandidateAction -Config $Config -ProjectRoot $ProjectRoot -ConfigPath $ConfigPath
         }
+        'release-check' {
+            Invoke-ReleaseCheckAction -ProjectRoot $ProjectRoot
+        }
         'exit' {
             return $false
         }
@@ -494,6 +505,27 @@ function Invoke-MessageBusAction {
     }
     catch {
         Write-Host "  [ERROR] MessageBus ログエラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-ReleaseCheckAction {
+    param([string]$ProjectRoot)
+    Write-Host ""
+    try {
+        $scriptPath = Join-Path $ProjectRoot "scripts/main/Invoke-ReleaseCheck.ps1"
+        if (-not (Test-Path $scriptPath)) {
+            throw "リリース前チェックコマンドが見つかりません: $scriptPath"
+        }
+
+        & pwsh -NoProfile -File $scriptPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] リリース前チェックに失敗項目があります。" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] リリース前チェックエラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -1155,5 +1187,6 @@ Export-ModuleMember -Function @(
     'Read-ProjectCandidateManagementInput',
     'Read-SupervisorProjectSelection',
     'Invoke-SupervisorReportAction',
+    'Invoke-ReleaseCheckAction',
     'Select-ProjectInteractive'
 )

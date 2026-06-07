@@ -86,9 +86,9 @@ Describe "Get-MenuItems" {
         }
     }
 
-    It "診断・管理セクション項目（1〜11）が全て含まれる" {
+    It "診断・管理セクション項目（1〜12）が全て含まれる" {
         $items = Get-MenuItems -Config (New-TestConfig)
-        @('1','2','3','4','5','6','7','8','9','10','11') | ForEach-Object {
+        @('1','2','3','4','5','6','7','8','9','10','11','12') | ForEach-Object {
             $key = $_
             ($items | Where-Object { $_.Key -eq $key }) | Should -Not -BeNullOrEmpty -Because "Key=$key が見つからない"
         }
@@ -118,6 +118,14 @@ Describe "Get-MenuItems" {
         $manager | Should -Not -BeNullOrEmpty
         $manager.Key | Should -Be '11'
         $manager.Enabled | Should -BeTrue
+    }
+
+    It "リリース前チェック項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $releaseCheck = $items | Where-Object { $_.Action -eq 'release-check' }
+        $releaseCheck | Should -Not -BeNullOrEmpty
+        $releaseCheck.Key | Should -Be '12'
+        $releaseCheck.Enabled | Should -BeTrue
     }
 }
 
