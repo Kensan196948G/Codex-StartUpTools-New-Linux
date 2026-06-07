@@ -82,8 +82,8 @@ function Get-MenuItems {
     # --- 最近のプロジェクトセクション ---
     $items.Add([pscustomobject]@{
         Key     = '7'
-        Label   = "最近のプロジェクト一覧"
-        Note    = "履歴から再起動"
+        Label   = "最近のプロジェクト再起動"
+        Note    = "履歴から番号選択で Codex を再起動"
         Section = "プロジェクト管理"
         Action  = 'recent-projects'
         Enabled = $Config.recentProjects.enabled -eq $true
@@ -316,7 +316,7 @@ function Invoke-MenuAction {
             Invoke-BootstrapAction -ProjectRoot $ProjectRoot
         }
         'recent-projects' {
-            Invoke-RecentProjectsAction -Config $Config
+            Invoke-RecentProjectsAction -Config $Config -ProjectRoot $ProjectRoot
         }
         'message-bus' {
             Invoke-MessageBusAction -StatePath $StatePath
@@ -461,8 +461,121 @@ function Invoke-BootstrapAction {
     Wait-MenuInput
 }
 
+function Get-RecentRestartCandidate {
+    [CmdletBinding()]
+    [OutputType([System.Object[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [string]$HistoryPath = "",
+        [string]$Tool = "codex",
+        [string]$Mode = "local",
+        [int]$MaxCount = 10
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HistoryPath)) {
+        return @()
+    }
+
+    $historyPath = [System.Environment]::ExpandEnvironmentVariables($HistoryPath)
+    $entries = @(Get-RecentProject -HistoryPath $historyPath -ErrorAction SilentlyContinue)
+
+    if ($Tool) {
+        $entries = @($entries | Where-Object { $_.tool -eq $Tool })
+    }
+    if ($Mode) {
+        $entries = @($entries | Where-Object { $_.mode -eq $Mode })
+    }
+
+    $localBase = if ($Config.projectsDir) { $Config.projectsDir } elseif ($env:HOME) { Join-Path $env:HOME "Projects" } else { "/home/kensan/Projects" }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $candidates = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($entry in $entries) {
+        $projectName = "$($entry.project)"
+        if ([string]::IsNullOrWhiteSpace($projectName)) {
+            continue
+        }
+        if (-not $seen.Add($projectName)) {
+            continue
+        }
+
+        $projectPath = Join-Path $localBase $projectName
+        $candidates.Add([pscustomobject]@{
+            project   = $projectName
+            path      = $projectPath
+            tool      = $entry.tool
+            mode      = $entry.mode
+            timestamp = $entry.timestamp
+            result    = $entry.result
+            elapsedMs = $entry.elapsedMs
+            exists    = Test-Path $projectPath
+        })
+
+        if ($candidates.Count -ge $MaxCount) {
+            break
+        }
+    }
+
+    return @($candidates)
+}
+
+function Resolve-RecentRestartSelection {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Candidates,
+
+        [Parameter(Mandatory)]
+        [string]$InputText
+    )
+
+    $choice = $InputText.Trim()
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -eq "0") {
+        return $null
+    }
+    if (-not ($choice -match '^\d+$')) {
+        return $null
+    }
+
+    $index = [int]$choice
+    if ($index -lt 1 -or $index -gt $Candidates.Count) {
+        return $null
+    }
+
+    return $Candidates[$index - 1]
+}
+
+function Invoke-CodexRestartForRecentProject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ProjectName,
+
+        [string]$ProjectRoot = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        $ProjectRoot = Split-Path -Parent (Split-Path $PSScriptRoot -Parent)
+    }
+
+    $startScript = Join-Path $ProjectRoot "scripts/main/Start-Codex.ps1"
+    if (-not (Test-Path $startScript)) {
+        throw "Codex 起動スクリプトが見つかりません: $startScript"
+    }
+
+    Write-Host ("  Codex を再起動します: {0}" -f $ProjectName) -ForegroundColor Green
+    Write-Host ""
+    & pwsh -NoProfile -File $startScript -Project $ProjectName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ("  [WARN] Codex 再起動が終了コード {0} で終了しました。" -f $LASTEXITCODE) -ForegroundColor Yellow
+    }
+}
+
 function Invoke-RecentProjectsAction {
-    param([object]$Config)
+    param([object]$Config, [string]$ProjectRoot = "")
     Write-Host ""
     try {
         Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) "lib/Config.psm1") -Force -ErrorAction SilentlyContinue
@@ -470,23 +583,38 @@ function Invoke-RecentProjectsAction {
         if ($historyPath) {
             $historyPath = [System.Environment]::ExpandEnvironmentVariables($historyPath)
         }
-        $projects = @(Get-RecentProject -HistoryPath $historyPath -ErrorAction SilentlyContinue)
-        Write-Host "  最近のプロジェクト:" -ForegroundColor Cyan
+        $projects = @(Get-RecentRestartCandidate -Config $Config -HistoryPath $historyPath -Tool "codex" -Mode "local" -MaxCount 10)
+        Write-Host "  最近のプロジェクト再起動:" -ForegroundColor Cyan
         if ($projects.Count -eq 0) {
             Write-Host "    (履歴なし)" -ForegroundColor Yellow
         }
         else {
             $i = 1
-            $projects | Select-Object -First 10 | ForEach-Object {
+            $projects | ForEach-Object {
                 $result = if ($_.result) { $_.result } else { "unknown" }
                 $color = if ($result -eq 'success') { "Green" } elseif ($result -eq 'failure') { "Red" } else { "Yellow" }
-                Write-Host ("    {0,2}. {1,-30} [{2}]" -f $i, $_.project, $result) -ForegroundColor $color
+                $exists = if ($_.exists) { "ready" } else { "missing" }
+                Write-Host ("    {0,2}. {1,-30} [{2}] [{3}]" -f $i, $_.project, $result, $exists) -ForegroundColor $color
                 $i++
+            }
+            Write-Host ""
+            Write-Host "     0.  戻る" -ForegroundColor Cyan
+
+            $selectionText = Read-Host "  再起動する番号を選択してください"
+            $selected = Resolve-RecentRestartSelection -Candidates $projects -InputText $selectionText
+            if ($null -eq $selected) {
+                Write-Host "  [INFO] 最近のプロジェクト再起動をキャンセルしました。" -ForegroundColor Yellow
+            }
+            elseif (-not $selected.exists) {
+                Write-Host ("  [WARN] プロジェクトディレクトリが見つかりません: {0}" -f $selected.path) -ForegroundColor Yellow
+            }
+            else {
+                Invoke-CodexRestartForRecentProject -ProjectName $selected.project -ProjectRoot $ProjectRoot
             }
         }
     }
     catch {
-        Write-Host "  [ERROR] プロジェクト履歴取得エラー: $_" -ForegroundColor Red
+        Write-Host "  [ERROR] 最近のプロジェクト再起動エラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -932,12 +1060,15 @@ function Get-RecentProjectNames {
         [int]$MaxCount = 5
     )
 
-    if (-not $HistoryPath -or -not (Test-Path $HistoryPath)) {
+    if (-not $HistoryPath) {
         return @()
     }
 
     try {
         $historyPath = [System.Environment]::ExpandEnvironmentVariables($HistoryPath)
+        if (-not (Test-Path $historyPath)) {
+            return @()
+        }
         $entries = @(Get-RecentProject -HistoryPath $historyPath -ErrorAction SilentlyContinue)
 
         if ($Tool) {
@@ -1216,6 +1347,9 @@ Export-ModuleMember -Function @(
     'Get-LocalProjectList',
     'Get-RecentProjectNames',
     'Show-ProjectSelector',
+    'Get-RecentRestartCandidate',
+    'Resolve-RecentRestartSelection',
+    'Invoke-CodexRestartForRecentProject',
     'Read-ProjectCandidateManagementInput',
     'Read-SupervisorProjectSelection',
     'Invoke-GitHubPrFlowAction',

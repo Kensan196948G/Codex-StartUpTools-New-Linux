@@ -241,6 +241,48 @@ Describe "Get-RecentProjectNames" {
     }
 }
 
+Describe "Recent project restart helpers" {
+    BeforeEach {
+        $script:RecentRoot = Join-Path $TestDrive "recent-projects-root"
+        $script:RecentPath = Join-Path $TestDrive "recent-projects.json"
+        New-Item -ItemType Directory -Path (Join-Path $script:RecentRoot "Alpha") -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:RecentRoot "Beta") -Force | Out-Null
+
+        $config = New-TestConfig -ProjectsDir $script:RecentRoot
+        $config.recentProjects.historyFile = $script:RecentPath
+        $script:RecentConfig = $config
+
+        Update-RecentProject -ProjectName "Alpha" -Tool "codex" -Mode "local" -Result "success" -HistoryPath $script:RecentPath
+        Update-RecentProject -ProjectName "Beta" -Tool "codex" -Mode "local" -Result "failure" -HistoryPath $script:RecentPath
+        Update-RecentProject -ProjectName "MissingProject" -Tool "codex" -Mode "local" -Result "success" -HistoryPath $script:RecentPath
+        Update-RecentProject -ProjectName "Alpha" -Tool "codex" -Mode "local" -Result "success" -HistoryPath $script:RecentPath
+    }
+
+    It "最近履歴を再起動候補へ変換し、存在有無を付与する" {
+        $result = @(Get-RecentRestartCandidate -Config $script:RecentConfig -HistoryPath $script:RecentPath -Tool "codex" -Mode "local")
+
+        @($result).Count | Should -Be 3
+        $result[0].project | Should -Be "Alpha"
+        $result[0].exists | Should -BeTrue
+        ($result | Where-Object project -eq "MissingProject").exists | Should -BeFalse
+    }
+
+    It "番号選択を再起動候補へ解決する" {
+        $candidates = @(Get-RecentRestartCandidate -Config $script:RecentConfig -HistoryPath $script:RecentPath)
+        $selected = Resolve-RecentRestartSelection -Candidates $candidates -InputText "2"
+
+        $selected.project | Should -Be "MissingProject"
+    }
+
+    It "0 または不正入力は null を返す" {
+        $candidates = @(Get-RecentRestartCandidate -Config $script:RecentConfig -HistoryPath $script:RecentPath)
+
+        Resolve-RecentRestartSelection -Candidates $candidates -InputText "0" | Should -BeNullOrEmpty
+        Resolve-RecentRestartSelection -Candidates $candidates -InputText "abc" | Should -BeNullOrEmpty
+        Resolve-RecentRestartSelection -Candidates $candidates -InputText "99" | Should -BeNullOrEmpty
+    }
+}
+
 Describe "Read-SupervisorProjectSelection" {
     BeforeEach {
         $script:SupervisorCandidates = @(

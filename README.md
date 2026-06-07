@@ -25,6 +25,9 @@
 | ✅ | Supervisor適用 | 番号付き個別選択、preview、`yes` 確認 |
 | ✅ | Supervisorレポート | 登録プロジェクトの `Managed / Missing / Foreign / Invalid` 集計 |
 | ✅ | Supervisor差分表示 | 上書き前に既存manifestとの差分を表示 |
+| ✅ | リリース前チェック | Pester / Architecture / DryRun / README / Git状態を統合確認 |
+| ✅ | GitHub PR確認 | Draft PR / CI / gh auth を確認。作成は明示実行 |
+| ✅ | 最近プロジェクト再起動 | Codex履歴から番号選択で再起動 |
 | 🚫 | SSH接続 | 削除。ローカルプロジェクト起動のみ |
 | 🚫 | Claude / Copilot起動 | 対象外 |
 | 🧑 | 人間判断 | `final-choice`, `merge`, `release`, public化 |
@@ -40,7 +43,7 @@
 | `4` | 🌿 | Worktree Manager | Git worktreeの一覧・作成・削除 |
 | `5` | 🧮 | Token Budget確認 | トークン使用状況と残量ゾーンを表示 |
 | `6` | 🧪 | Bootstrap実行 | 設定・ツール・CIの事前確認 |
-| `7` | 🕘 | 最近のプロジェクト一覧 | 履歴から再起動 |
+| `7` | 🕘 | 最近のプロジェクト再起動 | 履歴から番号選択でCodexを再起動 |
 | `8` | 🛡️ | Supervisor適用 | 番号選択した登録プロジェクトへ適用 |
 | `9` | 📋 | Supervisorレポート | 登録プロジェクトの適用状況を一覧化 |
 | `10` | 📨 | MessageBusログ | フェーズ遷移ログを確認 |
@@ -195,6 +198,28 @@ flowchart TD
 }
 ```
 
+## 🕘 最近のプロジェクト再起動
+
+`7. 最近のプロジェクト再起動` は、`recentProjects.historyFile` に保存された Codex ローカル起動履歴を読み、番号選択で `Start-Codex.ps1 -Project <name>` へ委譲します。存在しないプロジェクトは `missing` として表示し、再起動前に止めます。
+
+```mermaid
+flowchart TD
+    A["🧾 recent-projects.json"] --> B["🔎 codex / local 履歴を抽出"]
+    B --> C["🔁 重複を最新1件へ整理"]
+    C --> D{"📁 project dir exists?"}
+    D -->|yes| E["✅ ready"]
+    D -->|no| F["🟡 missing"]
+    E --> G["🔢 人間が番号選択"]
+    G --> H["🚀 Start-Codex.ps1 -Project <name>"]
+    F --> I["⏹️ 再起動しない"]
+```
+
+| 表示 | 意味 |
+|---|---|
+| ✅ `ready` | `/home/kensan/Projects/<project>` が存在し、再起動可能 |
+| 🟡 `missing` | 履歴にはあるが、現在のProjects配下に存在しない |
+| `success / failure / unknown` | 前回起動結果 |
+
 ## 🧑‍⚖️ 判断権限
 
 ```mermaid
@@ -317,14 +342,14 @@ timeline
     title Release Roadmap
     v0.1.0 : 初期Linux Codexスタートツール
     v0.1.1 : Supervisor少数実適用と安定化
-    v0.2.0 : Supervisorレポート / 更新差分表示 / 除外・カテゴリUI / リリース前チェック統合
+    v0.2.0 : Supervisorレポート / 更新差分表示 / 除外・カテゴリUI / リリース前チェック / PR確認 / 最近再起動
 ```
 
 | バージョン | 状態 | 内容 |
 |---|---|---|
 | ✅ `v0.1.0` | 完了 | Linuxローカル起動MVP |
 | ✅ `v0.1.1` | 完了 | Supervisor少数適用、運用安定化 |
-| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI、リリース前チェック統合、GitHub PR確認 |
+| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI、リリース前チェック統合、GitHub PR確認、最近プロジェクト再起動 |
 
 ## 🔐 安全運用ルール
 
