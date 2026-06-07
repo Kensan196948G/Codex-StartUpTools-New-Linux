@@ -78,7 +78,7 @@ function Test-ReleaseReadmeRequirement {
         [Parameter(Mandatory)]
         [string]$ProjectRoot,
 
-        [string[]]$RequiredText = @("Supervisorレポート", "更新差分表示", "プロジェクト候補管理", "リリース")
+        [string[]]$RequiredText = @("Supervisorレポート", "更新差分表示", "プロジェクト候補管理", "リリース", "GitHub PR")
     )
 
     $readmePath = Join-Path $ProjectRoot "README.md"

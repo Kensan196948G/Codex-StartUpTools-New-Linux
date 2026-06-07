@@ -46,6 +46,7 @@
 | `10` | 📨 | MessageBusログ | フェーズ遷移ログを確認 |
 | `11` | 🗂️ | プロジェクト候補管理 | 登録候補の除外・カテゴリを番号で管理 |
 | `12` | ✅ | リリース前チェック | Pester / Architecture / DryRun / README / Git状態を統合確認 |
+| `13` | 🔀 | GitHub PR確認 | Draft PR / CI / gh auth を確認。作成は明示実行 |
 
 ## 🧩 全体アーキテクチャ
 
@@ -275,6 +276,40 @@ flowchart TD
 | `pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1 -SkipPester -SkipDryRun -AllowDirty` | 軽量な設定・文書・Git確認 |
 | `pwsh -NoProfile -File scripts/main/Invoke-ReleaseCheck.ps1 -Json` | JSON形式の結果出力 |
 
+## 🔀 GitHub PR作成/確認フロー
+
+`scripts/main/Invoke-GitHubPrFlow.ps1` は、現在ブランチのDraft PRとCI状態を確認するための安全運用コマンドです。通常実行では確認だけを行い、PR作成は `-CreateDraft` を明示した場合だけ実行します。mergeは実行しません。
+
+```mermaid
+flowchart TD
+    A["🔀 Invoke-GitHubPrFlow.ps1"] --> B["gh CLI確認"]
+    A --> C["gh auth確認"]
+    A --> D["現在ブランチ確認"]
+    A --> E["origin GitHub repo確認"]
+    D --> F{"main/master/develop?"}
+    F -->|yes| G["⛔ PR作成不可"]
+    F -->|no| H["既存PR確認"]
+    H --> I{"PRあり?"}
+    I -->|yes| J["📋 PR番号・URL・Draft・CI集計"]
+    I -->|no + -CreateDraft| K["📝 Draft PR作成"]
+    I -->|no| L["確認のみ"]
+    J --> M["👤 Human merge decision"]
+    K --> M
+```
+
+| コマンド | 用途 |
+|---|---|
+| `pwsh -NoProfile -File scripts/main/Invoke-GitHubPrFlow.ps1` | 既存PRとCI状態を確認 |
+| `pwsh -NoProfile -File scripts/main/Invoke-GitHubPrFlow.ps1 -CreateDraft` | Draft PRがない場合だけ作成 |
+| `pwsh -NoProfile -File scripts/main/Invoke-GitHubPrFlow.ps1 -Json` | JSON形式の結果出力 |
+
+安全ルール:
+
+1. `main`, `master`, `develop` ではPR作成しない。
+2. 作成するPRはDraft固定。
+3. merge、release、public化は人間判断。
+4. PRが既にある場合は重複作成しない。
+
 ## 🧾 リリース履歴と次フェーズ
 
 ```mermaid
@@ -289,7 +324,7 @@ timeline
 |---|---|---|
 | ✅ `v0.1.0` | 完了 | Linuxローカル起動MVP |
 | ✅ `v0.1.1` | 完了 | Supervisor少数適用、運用安定化 |
-| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI、リリース前チェック統合 |
+| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI、リリース前チェック統合、GitHub PR確認 |
 
 ## 🔐 安全運用ルール
 

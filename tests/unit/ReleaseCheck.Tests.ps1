@@ -38,7 +38,7 @@ Describe "Test-ReleaseIgnoredPath" {
 
 Describe "Test-ReleaseReadmeRequirement" {
     It "README に必須語があれば pass" {
-        "Supervisorレポート 更新差分表示 プロジェクト候補管理 リリース" | Set-Content -Path (Join-Path $TestDrive "README.md") -Encoding UTF8
+        "Supervisorレポート 更新差分表示 プロジェクト候補管理 リリース GitHub PR" | Set-Content -Path (Join-Path $TestDrive "README.md") -Encoding UTF8
 
         $result = Test-ReleaseReadmeRequirement -ProjectRoot $TestDrive
 
@@ -99,7 +99,7 @@ Describe "Test-ReleaseGitState" {
 Describe "Invoke-ReleaseCheck" {
     It "軽量チェックの集約結果を返す" {
         "config/config.json`nstate.json`nlogs/" | Set-Content -Path (Join-Path $TestDrive ".gitignore") -Encoding UTF8
-        "Supervisorレポート 更新差分表示 プロジェクト候補管理 リリース" | Set-Content -Path (Join-Path $TestDrive "README.md") -Encoding UTF8
+        "Supervisorレポート 更新差分表示 プロジェクト候補管理 リリース GitHub PR" | Set-Content -Path (Join-Path $TestDrive "README.md") -Encoding UTF8
         $configDir = Join-Path $TestDrive "config"
         New-Item -ItemType Directory -Path $configDir | Out-Null
         Copy-Item -Path (Join-Path $script:RepoRoot "config/config.json.template") -Destination (Join-Path $configDir "config.json.template")

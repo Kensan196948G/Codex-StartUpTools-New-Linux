@@ -86,9 +86,9 @@ Describe "Get-MenuItems" {
         }
     }
 
-    It "診断・管理セクション項目（1〜12）が全て含まれる" {
+    It "診断・管理セクション項目（1〜13）が全て含まれる" {
         $items = Get-MenuItems -Config (New-TestConfig)
-        @('1','2','3','4','5','6','7','8','9','10','11','12') | ForEach-Object {
+        @('1','2','3','4','5','6','7','8','9','10','11','12','13') | ForEach-Object {
             $key = $_
             ($items | Where-Object { $_.Key -eq $key }) | Should -Not -BeNullOrEmpty -Because "Key=$key が見つからない"
         }
@@ -126,6 +126,14 @@ Describe "Get-MenuItems" {
         $releaseCheck | Should -Not -BeNullOrEmpty
         $releaseCheck.Key | Should -Be '12'
         $releaseCheck.Enabled | Should -BeTrue
+    }
+
+    It "GitHub PR 確認項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $githubPr = $items | Where-Object { $_.Action -eq 'github-pr-flow' }
+        $githubPr | Should -Not -BeNullOrEmpty
+        $githubPr.Key | Should -Be '13'
+        $githubPr.Enabled | Should -BeTrue
     }
 }
 

@@ -128,6 +128,14 @@ function Get-MenuItems {
         Action  = 'release-check'
         Enabled = $true
     })
+    $items.Add([pscustomobject]@{
+        Key     = '13'
+        Label   = "GitHub PR 確認"
+        Note    = "Draft PR / CI / gh auth を確認。作成は専用コマンドで明示"
+        Section = $null
+        Action  = 'github-pr-flow'
+        Enabled = $true
+    })
 
     # --- 終了 ---
     $items.Add([pscustomobject]@{
@@ -328,6 +336,9 @@ function Invoke-MenuAction {
         'release-check' {
             Invoke-ReleaseCheckAction -ProjectRoot $ProjectRoot
         }
+        'github-pr-flow' {
+            Invoke-GitHubPrFlowAction -ProjectRoot $ProjectRoot
+        }
         'exit' {
             return $false
         }
@@ -526,6 +537,27 @@ function Invoke-ReleaseCheckAction {
     }
     catch {
         Write-Host "  [ERROR] リリース前チェックエラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-GitHubPrFlowAction {
+    param([string]$ProjectRoot)
+    Write-Host ""
+    try {
+        $scriptPath = Join-Path $ProjectRoot "scripts/main/Invoke-GitHubPrFlow.ps1"
+        if (-not (Test-Path $scriptPath)) {
+            throw "GitHub PR フローコマンドが見つかりません: $scriptPath"
+        }
+
+        & pwsh -NoProfile -File $scriptPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] GitHub PR フローに確認項目があります。" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] GitHub PR フローエラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -1186,6 +1218,7 @@ Export-ModuleMember -Function @(
     'Show-ProjectSelector',
     'Read-ProjectCandidateManagementInput',
     'Read-SupervisorProjectSelection',
+    'Invoke-GitHubPrFlowAction',
     'Invoke-SupervisorReportAction',
     'Invoke-ReleaseCheckAction',
     'Select-ProjectInteractive'
