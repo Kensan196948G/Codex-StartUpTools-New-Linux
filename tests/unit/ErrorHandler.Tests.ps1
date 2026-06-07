@@ -32,20 +32,20 @@ Describe "Get-ErrorCategory" {
 
 Describe "Show-CategorizedError" {
     It "ThrowAfter=true なら例外を投げる" {
-        { Show-CategorizedError -Category "CONFIG_INVALID" -Message "テスト設定エラー" -ThrowAfter $true } | Should -Throw
+        { Show-CategorizedError -Category "CONFIG_INVALID" -Message "テスト設定エラー" -ThrowAfter $true 6>$null } | Should -Throw
     }
 
     It "ThrowAfter=false なら例外を投げない" {
-        { Show-CategorizedError -Category "DEPENDENCY_MISSING" -Message "依存関係テスト" -ThrowAfter $false } | Should -Not -Throw
+        { Show-CategorizedError -Category "DEPENDENCY_MISSING" -Message "依存関係テスト" -ThrowAfter $false 6>$null } | Should -Not -Throw
     }
 }
 
 Describe "Show-Error" {
     It "自動分類して例外を投げる" {
-        { Show-Error -Message "codex not found" -ThrowAfter $true } | Should -Throw
+        { Show-Error -Message "codex not found" -ThrowAfter $true 6>$null } | Should -Throw
     }
 
     It "ThrowAfter=false なら例外を投げない" {
-        { Show-Error -Message "テストエラー通知" -ThrowAfter $false } | Should -Not -Throw
+        { Show-Error -Message "テストエラー通知" -ThrowAfter $false 6>$null } | Should -Not -Throw
     }
 }
