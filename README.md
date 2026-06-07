@@ -71,6 +71,26 @@ Supervisor は登録プロジェクト候補へ `.codex/supervisor.json` を配�
 3. merge、release、最終選択は人間判断として残す。
 4. Supervisor 適用は番号選択、preview、`yes` 確認後に書き込む。
 
+## v0.1.1 安定化メモ
+
+v0.1.1 では、Supervisor を少数の実プロジェクトへ段階適用して確認します。
+
+適用済み:
+
+| 順序 | プロジェクト | 確認 |
+|---|---|---|
+| 1件目 | `Codex-StartUpTools-New-Linux` | `.codex/supervisor.json` 作成、`sshEnabled=false` 確認 |
+| 追加3件 | `Claude-StartUpTools-New-Linux` | `.codex/supervisor.json` 作成確認 |
+| 追加3件 | `ClaudeCode-StartUpTools-New` | `.codex/supervisor.json` 作成確認 |
+| 追加3件 | `Codex-StartUpTools` | `.codex/supervisor.json` 作成確認 |
+
+運用ルール:
+
+1. 業務プロジェクトへ展開する前に、スタートアップツール系プロジェクトで確認する。
+2. `all` は原則使わず、番号選択で適用する。
+3. 既存 `.codex/supervisor.json` がある場合は、上書き前に差分確認する。
+4. public化、正式リリース、広範囲適用は人間の最終判断で行う。
+
 ## 検証
 
 ```bash

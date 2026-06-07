@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": "Codex-StartUpTools-New-Linux",
+  "managedBy": "Codex-StartUpTools-New-Linux",
+  "mode": "cto-autonomous",
+  "agentLoop": [
+    "monitor",
+    "build",
+    "verify",
+    "improve"
+  ],
+  "codexOnly": true,
+  "sshEnabled": false,
+  "humanDecisionRequired": [
+    "final-choice",
+    "merge",
+    "release"
+  ],
+  "supervisorAppliedAt": "2026-06-07T09:59:42.7487273+09:00"
+}
