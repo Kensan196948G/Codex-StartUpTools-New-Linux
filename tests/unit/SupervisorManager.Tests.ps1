@@ -11,6 +11,9 @@ BeforeAll {
                 roots         = @($Root)
                 include       = @()
                 exclude       = @("SkipMe")
+                categories    = [pscustomobject]@{
+                    startup = @("Alpha")
+                }
                 maxCandidates = 10
             }
             supervisor         = [pscustomobject]@{
@@ -33,6 +36,46 @@ Describe "Get-RegisteredProjectCandidate" {
         $result.name | Should -Contain "Alpha"
         $result.name | Should -Not -Contain "SkipMe"
         $result.name | Should -Not -Contain ".hidden"
+    }
+}
+
+Describe "Get-RegisteredProjectCandidateInventory" {
+    It "除外済み候補も状態付きで返しカテゴリを付与する" {
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive "Alpha") | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive "SkipMe") | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive "Other") | Out-Null
+
+        $result = @(Get-RegisteredProjectCandidateInventory -Config (New-TestSupervisorConfig -Root $TestDrive))
+
+        ($result | Where-Object name -eq "Alpha").status | Should -Be "active"
+        ($result | Where-Object name -eq "Alpha").category | Should -Be "startup"
+        ($result | Where-Object name -eq "SkipMe").status | Should -Be "excluded"
+        ($result | Where-Object name -eq "Other").category | Should -Be "uncategorized"
+    }
+}
+
+Describe "registeredProjects exclude/category updates" {
+    It "除外リストへ追加・復帰できる" {
+        $config = New-TestSupervisorConfig -Root $TestDrive
+
+        Set-RegisteredProjectExclusion -Config $config -Operation exclude -ProjectNames @("Beta", "Alpha") | Out-Null
+        $config.registeredProjects.exclude | Should -Contain "Alpha"
+        $config.registeredProjects.exclude | Should -Contain "Beta"
+
+        Set-RegisteredProjectExclusion -Config $config -Operation restore -ProjectNames @("SkipMe", "Beta") | Out-Null
+        $config.registeredProjects.exclude | Should -Contain "Alpha"
+        $config.registeredProjects.exclude | Should -Not -Contain "Beta"
+        $config.registeredProjects.exclude | Should -Not -Contain "SkipMe"
+    }
+
+    It "カテゴリ付与時に既存カテゴリから移動する" {
+        $config = New-TestSupervisorConfig -Root $TestDrive
+
+        Set-RegisteredProjectCategory -Config $config -CategoryName "business" -ProjectNames @("Alpha", "Beta") | Out-Null
+
+        $config.registeredProjects.categories.startup | Should -Not -Contain "Alpha"
+        $config.registeredProjects.categories.business | Should -Contain "Alpha"
+        $config.registeredProjects.categories.business | Should -Contain "Beta"
     }
 }
 

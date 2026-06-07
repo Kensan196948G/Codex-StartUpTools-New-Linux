@@ -18,6 +18,7 @@ BeforeAll {
                 roots         = @($ProjectsDir)
                 include       = @()
                 exclude       = @()
+                categories    = [pscustomobject]@{}
                 maxCandidates = 80
             }
             tools              = [pscustomobject]@{
@@ -85,9 +86,9 @@ Describe "Get-MenuItems" {
         }
     }
 
-    It "診断・管理セクション項目（1〜10）が全て含まれる" {
+    It "診断・管理セクション項目（1〜11）が全て含まれる" {
         $items = Get-MenuItems -Config (New-TestConfig)
-        @('1','2','3','4','5','6','7','8','9','10') | ForEach-Object {
+        @('1','2','3','4','5','6','7','8','9','10','11') | ForEach-Object {
             $key = $_
             ($items | Where-Object { $_.Key -eq $key }) | Should -Not -BeNullOrEmpty -Because "Key=$key が見つからない"
         }
@@ -109,6 +110,14 @@ Describe "Get-MenuItems" {
     It "supervisor.enabled=false の場合 supervisor-report が Enabled=false" {
         $items = Get-MenuItems -Config (New-TestConfig -SupervisorEnabled:$false)
         ($items | Where-Object { $_.Action -eq 'supervisor-report' }).Enabled | Should -BeFalse
+    }
+
+    It "プロジェクト候補管理項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $manager = $items | Where-Object { $_.Action -eq 'project-candidates' }
+        $manager | Should -Not -BeNullOrEmpty
+        $manager.Key | Should -Be '11'
+        $manager.Enabled | Should -BeTrue
     }
 }
 
@@ -237,5 +246,39 @@ Describe "Read-SupervisorProjectSelection" {
 
     It "0 はキャンセルとして空配列を返す" {
         @(Read-SupervisorProjectSelection -Candidates $script:SupervisorCandidates -InputText "0").Count | Should -Be 0
+    }
+}
+
+Describe "Read-ProjectCandidateManagementInput" {
+    BeforeEach {
+        $script:ProjectCandidates = @(
+            [pscustomobject]@{ name = "Alpha"; path = "/tmp/Alpha" },
+            [pscustomobject]@{ name = "Beta"; path = "/tmp/Beta" },
+            [pscustomobject]@{ name = "Gamma"; path = "/tmp/Gamma" }
+        )
+    }
+
+    It "+番号 を除外操作として解析する" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "+1,3"
+        $result.operation | Should -Be "exclude"
+        $result.projectNames | Should -Be @("Alpha", "Gamma")
+    }
+
+    It "-番号 を復帰操作として解析する" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "-2"
+        $result.operation | Should -Be "restore"
+        $result.projectNames | Should -Be @("Beta")
+    }
+
+    It "c番号:カテゴリ をカテゴリ操作として解析する" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "c1,2:startup-tools"
+        $result.operation | Should -Be "category"
+        $result.projectNames | Should -Be @("Alpha", "Beta")
+        $result.category | Should -Be "startup-tools"
+    }
+
+    It "0 は none を返す" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "0"
+        $result.operation | Should -Be "none"
     }
 }

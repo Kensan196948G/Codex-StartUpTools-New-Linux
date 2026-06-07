@@ -112,6 +112,14 @@ function Get-MenuItems {
         Action  = 'message-bus'
         Enabled = $true
     })
+    $items.Add([pscustomobject]@{
+        Key     = '11'
+        Label   = "プロジェクト候補管理"
+        Note    = "登録候補の除外・カテゴリを番号で管理"
+        Section = $null
+        Action  = 'project-candidates'
+        Enabled = $Config.registeredProjects.enabled -eq $true
+    })
 
     # --- 終了 ---
     $items.Add([pscustomobject]@{
@@ -268,7 +276,8 @@ function Invoke-MenuAction {
         [object]$Config,
 
         [string]$ProjectRoot = "",
-        [string]$StatePath = ""
+        [string]$StatePath = "",
+        [string]$ConfigPath = ""
     )
 
     switch ($Item.Action) {
@@ -304,6 +313,9 @@ function Invoke-MenuAction {
         }
         'supervisor-report' {
             Invoke-SupervisorReportAction -Config $Config
+        }
+        'project-candidates' {
+            Invoke-ProjectCandidateAction -Config $Config -ProjectRoot $ProjectRoot -ConfigPath $ConfigPath
         }
         'exit' {
             return $false
@@ -482,6 +494,184 @@ function Invoke-MessageBusAction {
     }
     catch {
         Write-Host "  [ERROR] MessageBus ログエラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Resolve-ProjectCandidateNumberSelection {
+    [CmdletBinding()]
+    [OutputType([System.String[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Candidates,
+
+        [Parameter(Mandatory)]
+        [string]$NumberText
+    )
+
+    $selected = [System.Collections.Generic.List[string]]::new()
+    foreach ($token in @($NumberText -split ",")) {
+        $trimmed = $token.Trim()
+        if (-not ($trimmed -match '^\d+$')) {
+            continue
+        }
+
+        $index = [int]$trimmed
+        if ($index -lt 1 -or $index -gt $Candidates.Count) {
+            continue
+        }
+
+        $name = $Candidates[$index - 1].name
+        if ($name -notin $selected) {
+            $selected.Add($name)
+        }
+    }
+
+    return @($selected)
+}
+
+function Read-ProjectCandidateManagementInput {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Candidates,
+
+        [Parameter(Mandatory)]
+        [string]$InputText
+    )
+
+    $choice = $InputText.Trim()
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -eq "0") {
+        return [pscustomobject]@{ operation = "none"; projectNames = @(); category = "" }
+    }
+
+    if ($choice -match '^\+(.+)$') {
+        return [pscustomobject]@{
+            operation    = "exclude"
+            projectNames = @(Resolve-ProjectCandidateNumberSelection -Candidates $Candidates -NumberText $Matches[1])
+            category     = ""
+        }
+    }
+
+    if ($choice -match '^\-(.+)$') {
+        return [pscustomobject]@{
+            operation    = "restore"
+            projectNames = @(Resolve-ProjectCandidateNumberSelection -Candidates $Candidates -NumberText $Matches[1])
+            category     = ""
+        }
+    }
+
+    if ($choice -match '^c(.+?):(.+)$') {
+        return [pscustomobject]@{
+            operation    = "category"
+            projectNames = @(Resolve-ProjectCandidateNumberSelection -Candidates $Candidates -NumberText $Matches[1])
+            category     = $Matches[2].Trim()
+        }
+    }
+
+    return [pscustomobject]@{ operation = "invalid"; projectNames = @(); category = "" }
+}
+
+function Save-ProjectCandidateConfig {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [string]$ConfigPath = "",
+        [string]$ProjectRoot = ""
+    )
+
+    $targetPath = $ConfigPath
+    if ([string]::IsNullOrWhiteSpace($targetPath) -and -not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        $targetPath = Join-Path $ProjectRoot "config/config.json"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($targetPath)) {
+        throw "保存先 config.json を解決できません。"
+    }
+
+    $parent = Split-Path -Parent $targetPath
+    if (-not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $Config | ConvertTo-Json -Depth 20 | Set-Content -Path $targetPath -Encoding UTF8
+    return $targetPath
+}
+
+function Invoke-ProjectCandidateAction {
+    param([object]$Config, [string]$ProjectRoot = "", [string]$ConfigPath = "")
+    Write-Host ""
+    try {
+        Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) "lib/SupervisorManager.psm1") -Force -ErrorAction Stop
+        $inventory = @(Get-RegisteredProjectCandidateInventory -Config $Config)
+        Write-Host "  登録プロジェクト候補管理:" -ForegroundColor Cyan
+        if ($inventory.Count -eq 0) {
+            Write-Host "    (登録プロジェクト候補なし)" -ForegroundColor Yellow
+            Write-Host ""
+            Wait-MenuInput
+            return
+        }
+
+        $activeCount = @($inventory | Where-Object { -not $_.excluded }).Count
+        $excludedCount = @($inventory | Where-Object { $_.excluded }).Count
+        $categoryCount = @($inventory | Select-Object -ExpandProperty category -Unique).Count
+        Write-Host ("    Active   : {0}" -f $activeCount) -ForegroundColor Green
+        Write-Host ("    Excluded : {0}" -f $excludedCount) -ForegroundColor Yellow
+        Write-Host ("    Category : {0}" -f $categoryCount) -ForegroundColor Cyan
+        Write-Host ""
+
+        $i = 1
+        $inventory | Select-Object -First 80 | ForEach-Object {
+            $color = if ($_.excluded) { "Yellow" } else { "Cyan" }
+            Write-Host ("    {0,2}. [{1,-8}] [{2}] {3}" -f $i, $_.status, $_.category, $_.name) -ForegroundColor $color
+            $i++
+        }
+        if ($inventory.Count -gt 80) {
+            Write-Host ("    ... and {0} more" -f ($inventory.Count - 80)) -ForegroundColor Cyan
+        }
+
+        Write-Host ""
+        Write-Host "    入力例: +1,3 = 除外 / -2 = 復帰 / c1,3:startup-tools = カテゴリ付与 / 0 = 戻る" -ForegroundColor Yellow
+        $selectionText = Read-Host "  操作を入力してください"
+        $selection = Read-ProjectCandidateManagementInput -Candidates $inventory -InputText $selectionText
+
+        if ($selection.operation -eq "none") {
+            Write-Host "  [INFO] プロジェクト候補管理を終了しました。" -ForegroundColor Yellow
+            Write-Host ""
+            Wait-MenuInput
+            return
+        }
+        if ($selection.operation -eq "invalid" -or @($selection.projectNames).Count -eq 0) {
+            Write-Host "  [WARN] 有効な操作または番号がありません。" -ForegroundColor Yellow
+            Write-Host ""
+            Wait-MenuInput
+            return
+        }
+
+        switch ($selection.operation) {
+            "exclude" {
+                Set-RegisteredProjectExclusion -Config $Config -Operation exclude -ProjectNames $selection.projectNames | Out-Null
+                Write-Host ("  [OK] 除外に追加: {0}" -f (@($selection.projectNames) -join ", ")) -ForegroundColor Green
+            }
+            "restore" {
+                Set-RegisteredProjectExclusion -Config $Config -Operation restore -ProjectNames $selection.projectNames | Out-Null
+                Write-Host ("  [OK] 除外から復帰: {0}" -f (@($selection.projectNames) -join ", ")) -ForegroundColor Green
+            }
+            "category" {
+                Set-RegisteredProjectCategory -Config $Config -CategoryName $selection.category -ProjectNames $selection.projectNames | Out-Null
+                Write-Host ("  [OK] カテゴリ '{0}' に設定: {1}" -f $selection.category, (@($selection.projectNames) -join ", ")) -ForegroundColor Green
+            }
+        }
+
+        $savedPath = Save-ProjectCandidateConfig -Config $Config -ConfigPath $ConfigPath -ProjectRoot $ProjectRoot
+        Write-Host ("  [OK] 設定保存: {0}" -f $savedPath) -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  [ERROR] プロジェクト候補管理エラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -910,6 +1100,7 @@ function Start-InteractiveMenu {
 
         [string]$ProjectRoot = "",
         [string]$StatePath = "",
+        [string]$ConfigPath = "",
         [int]$MaxLoops = 0
     )
 
@@ -940,7 +1131,7 @@ function Start-InteractiveMenu {
         }
 
         $continue = Invoke-MenuAction -Item $choice -Config $Config `
-            -ProjectRoot $ProjectRoot -StatePath $StatePath
+            -ProjectRoot $ProjectRoot -StatePath $StatePath -ConfigPath $ConfigPath
 
         if (-not $continue) {
             $running = $false
@@ -961,6 +1152,7 @@ Export-ModuleMember -Function @(
     'Get-LocalProjectList',
     'Get-RecentProjectNames',
     'Show-ProjectSelector',
+    'Read-ProjectCandidateManagementInput',
     'Read-SupervisorProjectSelection',
     'Invoke-SupervisorReportAction',
     'Select-ProjectInteractive'

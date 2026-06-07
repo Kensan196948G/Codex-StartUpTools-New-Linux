@@ -76,6 +76,187 @@ function Get-RegisteredProjectCandidate {
     return @($projects)
 }
 
+function Get-RegisteredProjectCategoryMap {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    $map = @{}
+    $registered = $Config.PSObject.Properties["registeredProjects"]?.Value
+    $categories = if ($null -ne $registered -and $registered.PSObject.Properties["categories"]?.Value) {
+        $registered.categories
+    }
+    else {
+        $null
+    }
+
+    if ($null -eq $categories) {
+        return $map
+    }
+
+    foreach ($property in @($categories.PSObject.Properties)) {
+        foreach ($projectName in @($property.Value)) {
+            if (-not [string]::IsNullOrWhiteSpace("$projectName") -and -not $map.ContainsKey("$projectName")) {
+                $map["$projectName"] = $property.Name
+            }
+        }
+    }
+
+    return $map
+}
+
+function Get-RegisteredProjectCandidateInventory {
+    [CmdletBinding()]
+    [OutputType([System.Object[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    $registered = $Config.PSObject.Properties["registeredProjects"]?.Value
+    $maxCandidates = if ($null -ne $registered -and $registered.PSObject.Properties["maxCandidates"]?.Value) {
+        [int]$registered.maxCandidates
+    }
+    else {
+        80
+    }
+    $include = @(if ($null -ne $registered -and $registered.PSObject.Properties["include"]?.Value) { $registered.include })
+    $exclude = @(if ($null -ne $registered -and $registered.PSObject.Properties["exclude"]?.Value) { $registered.exclude })
+    $roots = @(Get-RegisteredProjectRoot -Config $Config)
+    $categoryMap = Get-RegisteredProjectCategoryMap -Config $Config
+
+    $projects = [System.Collections.Generic.List[object]]::new()
+    foreach ($root in $roots) {
+        $expandedRoot = [System.Environment]::ExpandEnvironmentVariables($root)
+        if (-not (Test-Path $expandedRoot)) {
+            continue
+        }
+
+        $children = @(Get-ChildItem -Path $expandedRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notmatch '^\.' } |
+                Sort-Object Name)
+
+        foreach ($child in $children) {
+            if ($projects.Count -ge $maxCandidates) {
+                break
+            }
+            if (@($include).Count -gt 0 -and $child.Name -notin $include) {
+                continue
+            }
+
+            $category = if ($categoryMap.ContainsKey($child.Name)) { $categoryMap[$child.Name] } else { "uncategorized" }
+            $isExcluded = $child.Name -in $exclude
+            $projects.Add([pscustomobject]@{
+                    name     = $child.Name
+                    path     = $child.FullName
+                    root     = $expandedRoot
+                    excluded = $isExcluded
+                    status   = if ($isExcluded) { "excluded" } else { "active" }
+                    category = $category
+                })
+        }
+    }
+
+    return @($projects)
+}
+
+function Set-RegisteredProjectExclusion {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseShouldProcessForStateChangingFunctions", "", Justification = "Used by interactive local config management after explicit user input.")]
+    [OutputType([System.String[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [Parameter(Mandatory)]
+        [ValidateSet("exclude", "restore")]
+        [string]$Operation,
+
+        [string[]]$ProjectNames = @()
+    )
+
+    $registered = $Config.PSObject.Properties["registeredProjects"]?.Value
+    if ($null -eq $registered) {
+        throw "registeredProjects 設定が見つかりません。"
+    }
+
+    $current = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in @(if ($registered.PSObject.Properties["exclude"]?.Value) { $registered.exclude })) {
+        if (-not [string]::IsNullOrWhiteSpace("$name") -and "$name" -notin $current) {
+            $current.Add("$name")
+        }
+    }
+
+    foreach ($name in @($ProjectNames)) {
+        if ([string]::IsNullOrWhiteSpace("$name")) {
+            continue
+        }
+
+        if ($Operation -eq "exclude") {
+            if ("$name" -notin $current) {
+                $current.Add("$name")
+            }
+        }
+        else {
+            if ("$name" -in $current) {
+                $current.Remove("$name") | Out-Null
+            }
+        }
+    }
+
+    $updated = @($current | Sort-Object)
+    $registered | Add-Member -NotePropertyName "exclude" -NotePropertyValue $updated -Force
+    return $updated
+}
+
+function Set-RegisteredProjectCategory {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseShouldProcessForStateChangingFunctions", "", Justification = "Used by interactive local config management after explicit user input.")]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [Parameter(Mandatory)]
+        [string]$CategoryName,
+
+        [string[]]$ProjectNames = @()
+    )
+
+    $category = $CategoryName.Trim()
+    if ([string]::IsNullOrWhiteSpace($category)) {
+        throw "カテゴリ名が空です。"
+    }
+
+    $registered = $Config.PSObject.Properties["registeredProjects"]?.Value
+    if ($null -eq $registered) {
+        throw "registeredProjects 設定が見つかりません。"
+    }
+
+    if (-not $registered.PSObject.Properties["categories"]?.Value) {
+        $registered | Add-Member -NotePropertyName "categories" -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    $categories = $registered.categories
+    $targetNames = @($ProjectNames | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") } | ForEach-Object { "$_" })
+
+    foreach ($property in @($categories.PSObject.Properties)) {
+        $remaining = @($property.Value | Where-Object { "$_" -notin $targetNames } | Sort-Object)
+        $categories | Add-Member -NotePropertyName $property.Name -NotePropertyValue $remaining -Force
+    }
+
+    $current = @(if ($categories.PSObject.Properties[$category]) { $categories.PSObject.Properties[$category].Value })
+    $updated = @($current + $targetNames | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") } | Sort-Object -Unique)
+    $categories | Add-Member -NotePropertyName $category -NotePropertyValue $updated -Force
+
+    return [pscustomobject]@{
+        category = $category
+        projects = $updated
+    }
+}
+
 function New-SupervisorManifest {
     [CmdletBinding()]
     [OutputType([System.Object])]
@@ -391,10 +572,14 @@ function Get-SupervisorReport {
 Export-ModuleMember -Function @(
     "Get-RegisteredProjectRoot",
     "Get-RegisteredProjectCandidate",
+    "Get-RegisteredProjectCandidateInventory",
+    "Get-RegisteredProjectCategoryMap",
     "Get-SupervisorManifestDiff",
     "Get-SupervisorReport",
     "Get-SupervisorStatusForProject",
     "New-SupervisorManifest",
+    "Set-RegisteredProjectCategory",
+    "Set-RegisteredProjectExclusion",
     "Set-SupervisorForProject",
     "Set-SupervisorForRegisteredProjects"
 )

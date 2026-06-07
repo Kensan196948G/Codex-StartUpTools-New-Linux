@@ -20,7 +20,8 @@ try {
     Start-InteractiveMenu `
         -Config      $config `
         -ProjectRoot $script:StartupRoot `
-        -StatePath   $statePath
+        -StatePath   $statePath `
+        -ConfigPath  $configPath
 }
 catch {
     Write-Host ""

@@ -11,6 +11,7 @@ BeforeAll {
                 roots         = @("/home/kensan/Projects")
                 include       = @()
                 exclude       = @()
+                categories    = [pscustomobject]@{}
                 maxCandidates = 80
             }
             tools              = [pscustomobject]@{
@@ -69,6 +70,12 @@ Describe "Test-StartupConfigSchema" {
             sensitiveKeys = "single-key"
         }) -Force
         (Test-StartupConfigSchema -Config $config) | Should -Contain "backupConfig.sensitiveKeys は配列である必要があります"
+    }
+
+    It "registeredProjects.categories のカテゴリ値が配列でない場合を拒否する" {
+        $config = Get-ValidConfig
+        $config.registeredProjects.categories | Add-Member -NotePropertyName "startup" -NotePropertyValue "ProjectA" -Force
+        (Test-StartupConfigSchema -Config $config) | Should -Contain "registeredProjects.categories.startup は配列である必要があります"
     }
 }
 

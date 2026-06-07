@@ -44,6 +44,7 @@
 | `8` | 🛡️ | Supervisor適用 | 番号選択した登録プロジェクトへ適用 |
 | `9` | 📋 | Supervisorレポート | 登録プロジェクトの適用状況を一覧化 |
 | `10` | 📨 | MessageBusログ | フェーズ遷移ログを確認 |
+| `11` | 🗂️ | プロジェクト候補管理 | 登録候補の除外・カテゴリを番号で管理 |
 
 ## 🧩 全体アーキテクチャ
 
@@ -154,6 +155,44 @@ flowchart TD
 | 🟣 `Foreign` | 既存ファイルあり。ただし本ツール管理ではない | 差分確認後に人間判断 |
 | 🔴 `Invalid` | JSONとして読めない | 手動修正または退避後に再適用 |
 
+## 🗂️ 登録プロジェクト候補管理
+
+`11. プロジェクト候補管理` では、`registeredProjects.roots` 配下の候補を一覧し、番号入力で除外・復帰・カテゴリ付与を行います。変更は `config/config.json` へ保存されます。
+
+```mermaid
+flowchart TD
+    A["📁 registeredProjects.roots"] --> B["🔎 候補一覧"]
+    B --> C["✅ active"]
+    B --> D["🟡 excluded"]
+    B --> E["🏷️ category"]
+    C --> F["🚀 Codex起動候補"]
+    C --> G["🛡️ Supervisor適用候補"]
+    D --> H["🚫 候補から除外"]
+    E --> I["🗂️ グループ把握"]
+```
+
+| 入力 | 操作 | 例 |
+|---|---|---|
+| `+番号` | 除外へ追加 | `+1,3` |
+| `-番号` | 除外から復帰 | `-2` |
+| `c番号:カテゴリ` | カテゴリ付与 | `c1,3:startup-tools` |
+| `0` | 戻る | `0` |
+
+設定例:
+
+```json
+{
+  "registeredProjects": {
+    "roots": ["/home/kensan/Projects"],
+    "include": [],
+    "exclude": ["ArchivedProject"],
+    "categories": {
+      "startup-tools": ["Codex-StartUpTools-New-Linux"]
+    }
+  }
+}
+```
+
 ## 🧑‍⚖️ 判断権限
 
 ```mermaid
@@ -212,14 +251,14 @@ timeline
     title Release Roadmap
     v0.1.0 : 初期Linux Codexスタートツール
     v0.1.1 : Supervisor少数実適用と安定化
-    v0.2.0 : Supervisorレポート / 更新差分表示 / 除外UI / リリース前チェック統合
+    v0.2.0 : Supervisorレポート / 更新差分表示 / 除外・カテゴリUI / リリース前チェック統合
 ```
 
 | バージョン | 状態 | 内容 |
 |---|---|---|
 | ✅ `v0.1.0` | 完了 | Linuxローカル起動MVP |
 | ✅ `v0.1.1` | 完了 | Supervisor少数適用、運用安定化 |
-| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示 |
+| 🚧 `v0.2.0` | 開発中 | Supervisor適用結果レポート、更新差分表示、除外・カテゴリUI |
 
 ## 🔐 安全運用ルール
 
