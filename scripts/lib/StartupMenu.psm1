@@ -82,8 +82,8 @@ function Get-MenuItems {
     # --- 最近のプロジェクトセクション ---
     $items.Add([pscustomobject]@{
         Key     = '7'
-        Label   = "最近のプロジェクト一覧"
-        Note    = "履歴から再起動"
+        Label   = "最近のプロジェクト再起動"
+        Note    = "履歴から番号選択で Codex を再起動"
         Section = "プロジェクト管理"
         Action  = 'recent-projects'
         Enabled = $Config.recentProjects.enabled -eq $true
@@ -98,10 +98,42 @@ function Get-MenuItems {
     })
     $items.Add([pscustomobject]@{
         Key     = '9'
+        Label   = "Supervisor レポート"
+        Note    = "登録プロジェクトの適用状況を一覧表示"
+        Section = $null
+        Action  = 'supervisor-report'
+        Enabled = $Config.supervisor.enabled -eq $true
+    })
+    $items.Add([pscustomobject]@{
+        Key     = '10'
         Label   = "MessageBus ログ確認"
         Note    = "フェーズ遷移・CI メッセージを表示"
         Section = $null
         Action  = 'message-bus'
+        Enabled = $true
+    })
+    $items.Add([pscustomobject]@{
+        Key     = '11'
+        Label   = "プロジェクト候補管理"
+        Note    = "登録候補の除外・カテゴリを番号で管理"
+        Section = $null
+        Action  = 'project-candidates'
+        Enabled = $Config.registeredProjects.enabled -eq $true
+    })
+    $items.Add([pscustomobject]@{
+        Key     = '12'
+        Label   = "リリース前チェック"
+        Note    = "Pester / Architecture / DryRun / README / Git状態を統合確認"
+        Section = $null
+        Action  = 'release-check'
+        Enabled = $true
+    })
+    $items.Add([pscustomobject]@{
+        Key     = '13'
+        Label   = "GitHub PR 確認"
+        Note    = "Draft PR / CI / gh auth を確認。作成は専用コマンドで明示"
+        Section = $null
+        Action  = 'github-pr-flow'
         Enabled = $true
     })
 
@@ -260,7 +292,8 @@ function Invoke-MenuAction {
         [object]$Config,
 
         [string]$ProjectRoot = "",
-        [string]$StatePath = ""
+        [string]$StatePath = "",
+        [string]$ConfigPath = ""
     )
 
     switch ($Item.Action) {
@@ -283,7 +316,7 @@ function Invoke-MenuAction {
             Invoke-BootstrapAction -ProjectRoot $ProjectRoot
         }
         'recent-projects' {
-            Invoke-RecentProjectsAction -Config $Config
+            Invoke-RecentProjectsAction -Config $Config -ProjectRoot $ProjectRoot
         }
         'message-bus' {
             Invoke-MessageBusAction -StatePath $StatePath
@@ -293,6 +326,18 @@ function Invoke-MenuAction {
         }
         'apply-supervisor' {
             Invoke-SupervisorAction -Config $Config -ProjectRoot $ProjectRoot
+        }
+        'supervisor-report' {
+            Invoke-SupervisorReportAction -Config $Config
+        }
+        'project-candidates' {
+            Invoke-ProjectCandidateAction -Config $Config -ProjectRoot $ProjectRoot -ConfigPath $ConfigPath
+        }
+        'release-check' {
+            Invoke-ReleaseCheckAction -ProjectRoot $ProjectRoot
+        }
+        'github-pr-flow' {
+            Invoke-GitHubPrFlowAction -ProjectRoot $ProjectRoot
         }
         'exit' {
             return $false
@@ -416,8 +461,121 @@ function Invoke-BootstrapAction {
     Wait-MenuInput
 }
 
+function Get-RecentRestartCandidate {
+    [CmdletBinding()]
+    [OutputType([System.Object[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [string]$HistoryPath = "",
+        [string]$Tool = "codex",
+        [string]$Mode = "local",
+        [int]$MaxCount = 10
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HistoryPath)) {
+        return @()
+    }
+
+    $historyPath = [System.Environment]::ExpandEnvironmentVariables($HistoryPath)
+    $entries = @(Get-RecentProject -HistoryPath $historyPath -ErrorAction SilentlyContinue)
+
+    if ($Tool) {
+        $entries = @($entries | Where-Object { $_.tool -eq $Tool })
+    }
+    if ($Mode) {
+        $entries = @($entries | Where-Object { $_.mode -eq $Mode })
+    }
+
+    $localBase = if ($Config.projectsDir) { $Config.projectsDir } elseif ($env:HOME) { Join-Path $env:HOME "Projects" } else { "/home/kensan/Projects" }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $candidates = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($entry in $entries) {
+        $projectName = "$($entry.project)"
+        if ([string]::IsNullOrWhiteSpace($projectName)) {
+            continue
+        }
+        if (-not $seen.Add($projectName)) {
+            continue
+        }
+
+        $projectPath = Join-Path $localBase $projectName
+        $candidates.Add([pscustomobject]@{
+            project   = $projectName
+            path      = $projectPath
+            tool      = $entry.tool
+            mode      = $entry.mode
+            timestamp = $entry.timestamp
+            result    = $entry.result
+            elapsedMs = $entry.elapsedMs
+            exists    = Test-Path $projectPath
+        })
+
+        if ($candidates.Count -ge $MaxCount) {
+            break
+        }
+    }
+
+    return @($candidates)
+}
+
+function Resolve-RecentRestartSelection {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Candidates,
+
+        [Parameter(Mandatory)]
+        [string]$InputText
+    )
+
+    $choice = $InputText.Trim()
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -eq "0") {
+        return $null
+    }
+    if (-not ($choice -match '^\d+$')) {
+        return $null
+    }
+
+    $index = [int]$choice
+    if ($index -lt 1 -or $index -gt $Candidates.Count) {
+        return $null
+    }
+
+    return $Candidates[$index - 1]
+}
+
+function Invoke-CodexRestartForRecentProject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ProjectName,
+
+        [string]$ProjectRoot = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        $ProjectRoot = Split-Path -Parent (Split-Path $PSScriptRoot -Parent)
+    }
+
+    $startScript = Join-Path $ProjectRoot "scripts/main/Start-Codex.ps1"
+    if (-not (Test-Path $startScript)) {
+        throw "Codex 起動スクリプトが見つかりません: $startScript"
+    }
+
+    Write-Host ("  Codex を再起動します: {0}" -f $ProjectName) -ForegroundColor Green
+    Write-Host ""
+    & pwsh -NoProfile -File $startScript -Project $ProjectName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ("  [WARN] Codex 再起動が終了コード {0} で終了しました。" -f $LASTEXITCODE) -ForegroundColor Yellow
+    }
+}
+
 function Invoke-RecentProjectsAction {
-    param([object]$Config)
+    param([object]$Config, [string]$ProjectRoot = "")
     Write-Host ""
     try {
         Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) "lib/Config.psm1") -Force -ErrorAction SilentlyContinue
@@ -425,23 +583,38 @@ function Invoke-RecentProjectsAction {
         if ($historyPath) {
             $historyPath = [System.Environment]::ExpandEnvironmentVariables($historyPath)
         }
-        $projects = @(Get-RecentProject -HistoryPath $historyPath -ErrorAction SilentlyContinue)
-        Write-Host "  最近のプロジェクト:" -ForegroundColor Cyan
+        $projects = @(Get-RecentRestartCandidate -Config $Config -HistoryPath $historyPath -Tool "codex" -Mode "local" -MaxCount 10)
+        Write-Host "  最近のプロジェクト再起動:" -ForegroundColor Cyan
         if ($projects.Count -eq 0) {
             Write-Host "    (履歴なし)" -ForegroundColor Yellow
         }
         else {
             $i = 1
-            $projects | Select-Object -First 10 | ForEach-Object {
+            $projects | ForEach-Object {
                 $result = if ($_.result) { $_.result } else { "unknown" }
                 $color = if ($result -eq 'success') { "Green" } elseif ($result -eq 'failure') { "Red" } else { "Yellow" }
-                Write-Host ("    {0,2}. {1,-30} [{2}]" -f $i, $_.project, $result) -ForegroundColor $color
+                $exists = if ($_.exists) { "ready" } else { "missing" }
+                Write-Host ("    {0,2}. {1,-30} [{2}] [{3}]" -f $i, $_.project, $result, $exists) -ForegroundColor $color
                 $i++
+            }
+            Write-Host ""
+            Write-Host "     0.  戻る" -ForegroundColor Cyan
+
+            $selectionText = Read-Host "  再起動する番号を選択してください"
+            $selected = Resolve-RecentRestartSelection -Candidates $projects -InputText $selectionText
+            if ($null -eq $selected) {
+                Write-Host "  [INFO] 最近のプロジェクト再起動をキャンセルしました。" -ForegroundColor Yellow
+            }
+            elseif (-not $selected.exists) {
+                Write-Host ("  [WARN] プロジェクトディレクトリが見つかりません: {0}" -f $selected.path) -ForegroundColor Yellow
+            }
+            else {
+                Invoke-CodexRestartForRecentProject -ProjectName $selected.project -ProjectRoot $ProjectRoot
             }
         }
     }
     catch {
-        Write-Host "  [ERROR] プロジェクト履歴取得エラー: $_" -ForegroundColor Red
+        Write-Host "  [ERROR] 最近のプロジェクト再起動エラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -471,6 +644,226 @@ function Invoke-MessageBusAction {
     }
     catch {
         Write-Host "  [ERROR] MessageBus ログエラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-ReleaseCheckAction {
+    param([string]$ProjectRoot)
+    Write-Host ""
+    try {
+        $scriptPath = Join-Path $ProjectRoot "scripts/main/Invoke-ReleaseCheck.ps1"
+        if (-not (Test-Path $scriptPath)) {
+            throw "リリース前チェックコマンドが見つかりません: $scriptPath"
+        }
+
+        & pwsh -NoProfile -File $scriptPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] リリース前チェックに失敗項目があります。" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] リリース前チェックエラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-GitHubPrFlowAction {
+    param([string]$ProjectRoot)
+    Write-Host ""
+    try {
+        $scriptPath = Join-Path $ProjectRoot "scripts/main/Invoke-GitHubPrFlow.ps1"
+        if (-not (Test-Path $scriptPath)) {
+            throw "GitHub PR フローコマンドが見つかりません: $scriptPath"
+        }
+
+        & pwsh -NoProfile -File $scriptPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] GitHub PR フローに確認項目があります。" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] GitHub PR フローエラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Resolve-ProjectCandidateNumberSelection {
+    [CmdletBinding()]
+    [OutputType([System.String[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Candidates,
+
+        [Parameter(Mandatory)]
+        [string]$NumberText
+    )
+
+    $selected = [System.Collections.Generic.List[string]]::new()
+    foreach ($token in @($NumberText -split ",")) {
+        $trimmed = $token.Trim()
+        if (-not ($trimmed -match '^\d+$')) {
+            continue
+        }
+
+        $index = [int]$trimmed
+        if ($index -lt 1 -or $index -gt $Candidates.Count) {
+            continue
+        }
+
+        $name = $Candidates[$index - 1].name
+        if ($name -notin $selected) {
+            $selected.Add($name)
+        }
+    }
+
+    return @($selected)
+}
+
+function Read-ProjectCandidateManagementInput {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Candidates,
+
+        [Parameter(Mandatory)]
+        [string]$InputText
+    )
+
+    $choice = $InputText.Trim()
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -eq "0") {
+        return [pscustomobject]@{ operation = "none"; projectNames = @(); category = "" }
+    }
+
+    if ($choice -match '^\+(.+)$') {
+        return [pscustomobject]@{
+            operation    = "exclude"
+            projectNames = @(Resolve-ProjectCandidateNumberSelection -Candidates $Candidates -NumberText $Matches[1])
+            category     = ""
+        }
+    }
+
+    if ($choice -match '^\-(.+)$') {
+        return [pscustomobject]@{
+            operation    = "restore"
+            projectNames = @(Resolve-ProjectCandidateNumberSelection -Candidates $Candidates -NumberText $Matches[1])
+            category     = ""
+        }
+    }
+
+    if ($choice -match '^c(.+?):(.+)$') {
+        return [pscustomobject]@{
+            operation    = "category"
+            projectNames = @(Resolve-ProjectCandidateNumberSelection -Candidates $Candidates -NumberText $Matches[1])
+            category     = $Matches[2].Trim()
+        }
+    }
+
+    return [pscustomobject]@{ operation = "invalid"; projectNames = @(); category = "" }
+}
+
+function Save-ProjectCandidateConfig {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [string]$ConfigPath = "",
+        [string]$ProjectRoot = ""
+    )
+
+    $targetPath = $ConfigPath
+    if ([string]::IsNullOrWhiteSpace($targetPath) -and -not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        $targetPath = Join-Path $ProjectRoot "config/config.json"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($targetPath)) {
+        throw "保存先 config.json を解決できません。"
+    }
+
+    $parent = Split-Path -Parent $targetPath
+    if (-not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $Config | ConvertTo-Json -Depth 20 | Set-Content -Path $targetPath -Encoding UTF8
+    return $targetPath
+}
+
+function Invoke-ProjectCandidateAction {
+    param([object]$Config, [string]$ProjectRoot = "", [string]$ConfigPath = "")
+    Write-Host ""
+    try {
+        Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) "lib/SupervisorManager.psm1") -Force -ErrorAction Stop
+        $inventory = @(Get-RegisteredProjectCandidateInventory -Config $Config)
+        Write-Host "  登録プロジェクト候補管理:" -ForegroundColor Cyan
+        if ($inventory.Count -eq 0) {
+            Write-Host "    (登録プロジェクト候補なし)" -ForegroundColor Yellow
+            Write-Host ""
+            Wait-MenuInput
+            return
+        }
+
+        $activeCount = @($inventory | Where-Object { -not $_.excluded }).Count
+        $excludedCount = @($inventory | Where-Object { $_.excluded }).Count
+        $categoryCount = @($inventory | Select-Object -ExpandProperty category -Unique).Count
+        Write-Host ("    Active   : {0}" -f $activeCount) -ForegroundColor Green
+        Write-Host ("    Excluded : {0}" -f $excludedCount) -ForegroundColor Yellow
+        Write-Host ("    Category : {0}" -f $categoryCount) -ForegroundColor Cyan
+        Write-Host ""
+
+        $i = 1
+        $inventory | Select-Object -First 80 | ForEach-Object {
+            $color = if ($_.excluded) { "Yellow" } else { "Cyan" }
+            Write-Host ("    {0,2}. [{1,-8}] [{2}] {3}" -f $i, $_.status, $_.category, $_.name) -ForegroundColor $color
+            $i++
+        }
+        if ($inventory.Count -gt 80) {
+            Write-Host ("    ... and {0} more" -f ($inventory.Count - 80)) -ForegroundColor Cyan
+        }
+
+        Write-Host ""
+        Write-Host "    入力例: +1,3 = 除外 / -2 = 復帰 / c1,3:startup-tools = カテゴリ付与 / 0 = 戻る" -ForegroundColor Yellow
+        $selectionText = Read-Host "  操作を入力してください"
+        $selection = Read-ProjectCandidateManagementInput -Candidates $inventory -InputText $selectionText
+
+        if ($selection.operation -eq "none") {
+            Write-Host "  [INFO] プロジェクト候補管理を終了しました。" -ForegroundColor Yellow
+            Write-Host ""
+            Wait-MenuInput
+            return
+        }
+        if ($selection.operation -eq "invalid" -or @($selection.projectNames).Count -eq 0) {
+            Write-Host "  [WARN] 有効な操作または番号がありません。" -ForegroundColor Yellow
+            Write-Host ""
+            Wait-MenuInput
+            return
+        }
+
+        switch ($selection.operation) {
+            "exclude" {
+                Set-RegisteredProjectExclusion -Config $Config -Operation exclude -ProjectNames $selection.projectNames | Out-Null
+                Write-Host ("  [OK] 除外に追加: {0}" -f (@($selection.projectNames) -join ", ")) -ForegroundColor Green
+            }
+            "restore" {
+                Set-RegisteredProjectExclusion -Config $Config -Operation restore -ProjectNames $selection.projectNames | Out-Null
+                Write-Host ("  [OK] 除外から復帰: {0}" -f (@($selection.projectNames) -join ", ")) -ForegroundColor Green
+            }
+            "category" {
+                Set-RegisteredProjectCategory -Config $Config -CategoryName $selection.category -ProjectNames $selection.projectNames | Out-Null
+                Write-Host ("  [OK] カテゴリ '{0}' に設定: {1}" -f $selection.category, (@($selection.projectNames) -join ", ")) -ForegroundColor Green
+            }
+        }
+
+        $savedPath = Save-ProjectCandidateConfig -Config $Config -ConfigPath $ConfigPath -ProjectRoot $ProjectRoot
+        Write-Host ("  [OK] 設定保存: {0}" -f $savedPath) -ForegroundColor Green
+    }
+    catch {
+        Write-Host "  [ERROR] プロジェクト候補管理エラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -555,7 +948,28 @@ function Invoke-SupervisorAction {
         Write-Host ""
         Write-Host "  適用予定:" -ForegroundColor Cyan
         $preview | ForEach-Object {
-            Write-Host ("    {0} -> {1}" -f $_.project, $_.target) -ForegroundColor Cyan
+            $actionLabel = switch ($_.action) {
+                "Create" { "create" }
+                "Update" { "update" }
+                "ReplaceInvalid" { "replace invalid" }
+                "RefreshTimestamp" { "refresh timestamp" }
+                default { "$($_.action)".ToLowerInvariant() }
+            }
+            Write-Host ("    {0} -> {1} [{2}]" -f $_.project, $_.target, $actionLabel) -ForegroundColor Cyan
+            if ($_.parseError) {
+                Write-Host ("      invalid JSON: {0}" -f $_.parseError) -ForegroundColor Red
+            }
+            elseif ($_.changeCount -gt 0) {
+                $_.changes | ForEach-Object {
+                    Write-Host ("      - {0}: {1} -> {2}" -f $_.property, $_.current, $_.desired) -ForegroundColor Yellow
+                }
+            }
+            elseif ($_.timestampWillRefresh) {
+                Write-Host "      - policy change: none (supervisorAppliedAt will refresh)" -ForegroundColor DarkYellow
+            }
+            else {
+                Write-Host "      - new supervisor manifest" -ForegroundColor Yellow
+            }
         }
 
         $answer = (Read-Host "  選択した候補へ適用しますか? (yes/no)").Trim().ToLowerInvariant()
@@ -571,6 +985,41 @@ function Invoke-SupervisorAction {
     }
     catch {
         Write-Host "  [ERROR] Supervisor 適用エラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-SupervisorReportAction {
+    param([object]$Config)
+    Write-Host ""
+    try {
+        Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) "lib/SupervisorManager.psm1") -Force -ErrorAction Stop
+        $report = Get-SupervisorReport -Config $Config
+        Write-Host "  Supervisor 適用レポート:" -ForegroundColor Cyan
+        Write-Host ("    Total   : {0}" -f $report.total)
+        Write-Host ("    Managed : {0}" -f $report.managed) -ForegroundColor Green
+        Write-Host ("    Missing : {0}" -f $report.missing) -ForegroundColor Yellow
+        Write-Host ("    Foreign : {0}" -f $report.foreign) -ForegroundColor Magenta
+        Write-Host ("    Invalid : {0}" -f $report.invalid) -ForegroundColor Red
+        Write-Host ""
+
+        $i = 1
+        $report.entries | ForEach-Object {
+            $color = switch ($_.status) {
+                "Managed" { "Green" }
+                "Missing" { "Yellow" }
+                "Foreign" { "Magenta" }
+                "Invalid" { "Red" }
+                default { "White" }
+            }
+            $detail = if ($_.hasSupervisor) { "{0} / {1}" -f $_.managedBy, $_.mode } else { "not applied" }
+            Write-Host ("    {0,2}. [{1,-7}] {2}  ({3})" -f $i, $_.status, $_.project, $detail) -ForegroundColor $color
+            $i++
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] Supervisor レポートエラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -611,12 +1060,15 @@ function Get-RecentProjectNames {
         [int]$MaxCount = 5
     )
 
-    if (-not $HistoryPath -or -not (Test-Path $HistoryPath)) {
+    if (-not $HistoryPath) {
         return @()
     }
 
     try {
         $historyPath = [System.Environment]::ExpandEnvironmentVariables($HistoryPath)
+        if (-not (Test-Path $historyPath)) {
+            return @()
+        }
         $entries = @(Get-RecentProject -HistoryPath $historyPath -ErrorAction SilentlyContinue)
 
         if ($Tool) {
@@ -843,6 +1295,7 @@ function Start-InteractiveMenu {
 
         [string]$ProjectRoot = "",
         [string]$StatePath = "",
+        [string]$ConfigPath = "",
         [int]$MaxLoops = 0
     )
 
@@ -873,7 +1326,7 @@ function Start-InteractiveMenu {
         }
 
         $continue = Invoke-MenuAction -Item $choice -Config $Config `
-            -ProjectRoot $ProjectRoot -StatePath $StatePath
+            -ProjectRoot $ProjectRoot -StatePath $StatePath -ConfigPath $ConfigPath
 
         if (-not $continue) {
             $running = $false
@@ -894,6 +1347,13 @@ Export-ModuleMember -Function @(
     'Get-LocalProjectList',
     'Get-RecentProjectNames',
     'Show-ProjectSelector',
+    'Get-RecentRestartCandidate',
+    'Resolve-RecentRestartSelection',
+    'Invoke-CodexRestartForRecentProject',
+    'Read-ProjectCandidateManagementInput',
     'Read-SupervisorProjectSelection',
+    'Invoke-GitHubPrFlowAction',
+    'Invoke-SupervisorReportAction',
+    'Invoke-ReleaseCheckAction',
     'Select-ProjectInteractive'
 )

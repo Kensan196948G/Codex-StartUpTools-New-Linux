@@ -18,6 +18,7 @@ BeforeAll {
                 roots         = @($ProjectsDir)
                 include       = @()
                 exclude       = @()
+                categories    = [pscustomobject]@{}
                 maxCandidates = 80
             }
             tools              = [pscustomobject]@{
@@ -85,9 +86,9 @@ Describe "Get-MenuItems" {
         }
     }
 
-    It "診断・管理セクション項目（1〜9）が全て含まれる" {
+    It "診断・管理セクション項目（1〜13）が全て含まれる" {
         $items = Get-MenuItems -Config (New-TestConfig)
-        @('1','2','3','4','5','6','7','8','9') | ForEach-Object {
+        @('1','2','3','4','5','6','7','8','9','10','11','12','13') | ForEach-Object {
             $key = $_
             ($items | Where-Object { $_.Key -eq $key }) | Should -Not -BeNullOrEmpty -Because "Key=$key が見つからない"
         }
@@ -96,6 +97,43 @@ Describe "Get-MenuItems" {
     It "recentProjects.enabled=false の場合 Key=7 が Enabled=false" {
         $items = Get-MenuItems -Config (New-TestConfig -RecentEnabled:$false)
         ($items | Where-Object { $_.Key -eq '7' }).Enabled | Should -BeFalse
+    }
+
+    It "Supervisor レポート項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $report = $items | Where-Object { $_.Action -eq 'supervisor-report' }
+        $report | Should -Not -BeNullOrEmpty
+        $report.Key | Should -Be '9'
+        $report.Enabled | Should -BeTrue
+    }
+
+    It "supervisor.enabled=false の場合 supervisor-report が Enabled=false" {
+        $items = Get-MenuItems -Config (New-TestConfig -SupervisorEnabled:$false)
+        ($items | Where-Object { $_.Action -eq 'supervisor-report' }).Enabled | Should -BeFalse
+    }
+
+    It "プロジェクト候補管理項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $manager = $items | Where-Object { $_.Action -eq 'project-candidates' }
+        $manager | Should -Not -BeNullOrEmpty
+        $manager.Key | Should -Be '11'
+        $manager.Enabled | Should -BeTrue
+    }
+
+    It "リリース前チェック項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $releaseCheck = $items | Where-Object { $_.Action -eq 'release-check' }
+        $releaseCheck | Should -Not -BeNullOrEmpty
+        $releaseCheck.Key | Should -Be '12'
+        $releaseCheck.Enabled | Should -BeTrue
+    }
+
+    It "GitHub PR 確認項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $githubPr = $items | Where-Object { $_.Action -eq 'github-pr-flow' }
+        $githubPr | Should -Not -BeNullOrEmpty
+        $githubPr.Key | Should -Be '13'
+        $githubPr.Enabled | Should -BeTrue
     }
 }
 
@@ -203,6 +241,48 @@ Describe "Get-RecentProjectNames" {
     }
 }
 
+Describe "Recent project restart helpers" {
+    BeforeEach {
+        $script:RecentRoot = Join-Path $TestDrive "recent-projects-root"
+        $script:RecentPath = Join-Path $TestDrive "recent-projects.json"
+        New-Item -ItemType Directory -Path (Join-Path $script:RecentRoot "Alpha") -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:RecentRoot "Beta") -Force | Out-Null
+
+        $config = New-TestConfig -ProjectsDir $script:RecentRoot
+        $config.recentProjects.historyFile = $script:RecentPath
+        $script:RecentConfig = $config
+
+        Update-RecentProject -ProjectName "Alpha" -Tool "codex" -Mode "local" -Result "success" -HistoryPath $script:RecentPath
+        Update-RecentProject -ProjectName "Beta" -Tool "codex" -Mode "local" -Result "failure" -HistoryPath $script:RecentPath
+        Update-RecentProject -ProjectName "MissingProject" -Tool "codex" -Mode "local" -Result "success" -HistoryPath $script:RecentPath
+        Update-RecentProject -ProjectName "Alpha" -Tool "codex" -Mode "local" -Result "success" -HistoryPath $script:RecentPath
+    }
+
+    It "最近履歴を再起動候補へ変換し、存在有無を付与する" {
+        $result = @(Get-RecentRestartCandidate -Config $script:RecentConfig -HistoryPath $script:RecentPath -Tool "codex" -Mode "local")
+
+        @($result).Count | Should -Be 3
+        $result[0].project | Should -Be "Alpha"
+        $result[0].exists | Should -BeTrue
+        ($result | Where-Object project -eq "MissingProject").exists | Should -BeFalse
+    }
+
+    It "番号選択を再起動候補へ解決する" {
+        $candidates = @(Get-RecentRestartCandidate -Config $script:RecentConfig -HistoryPath $script:RecentPath)
+        $selected = Resolve-RecentRestartSelection -Candidates $candidates -InputText "2"
+
+        $selected.project | Should -Be "MissingProject"
+    }
+
+    It "0 または不正入力は null を返す" {
+        $candidates = @(Get-RecentRestartCandidate -Config $script:RecentConfig -HistoryPath $script:RecentPath)
+
+        Resolve-RecentRestartSelection -Candidates $candidates -InputText "0" | Should -BeNullOrEmpty
+        Resolve-RecentRestartSelection -Candidates $candidates -InputText "abc" | Should -BeNullOrEmpty
+        Resolve-RecentRestartSelection -Candidates $candidates -InputText "99" | Should -BeNullOrEmpty
+    }
+}
+
 Describe "Read-SupervisorProjectSelection" {
     BeforeEach {
         $script:SupervisorCandidates = @(
@@ -224,5 +304,39 @@ Describe "Read-SupervisorProjectSelection" {
 
     It "0 はキャンセルとして空配列を返す" {
         @(Read-SupervisorProjectSelection -Candidates $script:SupervisorCandidates -InputText "0").Count | Should -Be 0
+    }
+}
+
+Describe "Read-ProjectCandidateManagementInput" {
+    BeforeEach {
+        $script:ProjectCandidates = @(
+            [pscustomobject]@{ name = "Alpha"; path = "/tmp/Alpha" },
+            [pscustomobject]@{ name = "Beta"; path = "/tmp/Beta" },
+            [pscustomobject]@{ name = "Gamma"; path = "/tmp/Gamma" }
+        )
+    }
+
+    It "+番号 を除外操作として解析する" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "+1,3"
+        $result.operation | Should -Be "exclude"
+        $result.projectNames | Should -Be @("Alpha", "Gamma")
+    }
+
+    It "-番号 を復帰操作として解析する" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "-2"
+        $result.operation | Should -Be "restore"
+        $result.projectNames | Should -Be @("Beta")
+    }
+
+    It "c番号:カテゴリ をカテゴリ操作として解析する" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "c1,2:startup-tools"
+        $result.operation | Should -Be "category"
+        $result.projectNames | Should -Be @("Alpha", "Beta")
+        $result.category | Should -Be "startup-tools"
+    }
+
+    It "0 は none を返す" {
+        $result = Read-ProjectCandidateManagementInput -Candidates $script:ProjectCandidates -InputText "0"
+        $result.operation | Should -Be "none"
     }
 }

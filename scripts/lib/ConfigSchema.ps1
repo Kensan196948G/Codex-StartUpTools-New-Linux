@@ -139,6 +139,19 @@ function Test-StartupConfigSchema {
         if ($null -ne $registeredProjects.PSObject.Properties["exclude"]?.Value -and $registeredProjects.PSObject.Properties["exclude"]?.Value -isnot [System.Array]) {
             Add-SchemaError -Errors $errors -Message "registeredProjects.exclude は配列である必要があります"
         }
+        if ($null -ne $registeredProjects.PSObject.Properties["categories"]?.Value) {
+            $categories = $registeredProjects.PSObject.Properties["categories"].Value
+            if ($categories -isnot [pscustomobject]) {
+                Add-SchemaError -Errors $errors -Message "registeredProjects.categories はオブジェクトである必要があります"
+            }
+            else {
+                foreach ($category in @($categories.PSObject.Properties)) {
+                    if ($category.Value -isnot [System.Array]) {
+                        Add-SchemaError -Errors $errors -Message "registeredProjects.categories.$($category.Name) は配列である必要があります"
+                    }
+                }
+            }
+        }
         if ($null -ne $registeredProjects.PSObject.Properties["maxCandidates"]?.Value -and -not (Test-IntegerValueInRange -Value $registeredProjects.PSObject.Properties["maxCandidates"]?.Value -Minimum 1 -Maximum 1000)) {
             Add-SchemaError -Errors $errors -Message "registeredProjects.maxCandidates は 1 から 1000 の整数である必要があります"
         }
