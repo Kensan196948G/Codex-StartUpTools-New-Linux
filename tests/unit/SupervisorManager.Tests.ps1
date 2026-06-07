@@ -76,3 +76,38 @@ Describe "Set-SupervisorForRegisteredProjects" {
         Test-Path (Join-Path $TestDrive "Alpha/.codex/supervisor.json") | Should -BeFalse
     }
 }
+
+Describe "Get-SupervisorReport" {
+    It "Managed / Missing / Foreign / Invalid を集計する" {
+        foreach ($name in @("ManagedProject", "MissingProject", "ForeignProject", "InvalidProject")) {
+            New-Item -ItemType Directory -Path (Join-Path $TestDrive $name) -Force | Out-Null
+        }
+
+        Set-SupervisorForProject -ProjectPath (Join-Path $TestDrive "ManagedProject") -Config (New-TestSupervisorConfig -Root $TestDrive) | Out-Null
+
+        $foreignDir = Join-Path $TestDrive "ForeignProject/.codex"
+        New-Item -ItemType Directory -Path $foreignDir -Force | Out-Null
+        @{
+            managedBy   = "OtherTool"
+            mode        = "external"
+            codexOnly   = $false
+            sshEnabled  = $true
+        } | ConvertTo-Json | Set-Content -Path (Join-Path $foreignDir "supervisor.json") -Encoding UTF8
+
+        $invalidDir = Join-Path $TestDrive "InvalidProject/.codex"
+        New-Item -ItemType Directory -Path $invalidDir -Force | Out-Null
+        "{ invalid json" | Set-Content -Path (Join-Path $invalidDir "supervisor.json") -Encoding UTF8
+
+        $report = Get-SupervisorReport -Config (New-TestSupervisorConfig -Root $TestDrive)
+
+        $report.total | Should -Be 4
+        $report.managed | Should -Be 1
+        $report.missing | Should -Be 1
+        $report.foreign | Should -Be 1
+        $report.invalid | Should -Be 1
+        ($report.entries | Where-Object project -eq "ManagedProject").status | Should -Be "Managed"
+        ($report.entries | Where-Object project -eq "MissingProject").status | Should -Be "Missing"
+        ($report.entries | Where-Object project -eq "ForeignProject").status | Should -Be "Foreign"
+        ($report.entries | Where-Object project -eq "InvalidProject").status | Should -Be "Invalid"
+    }
+}

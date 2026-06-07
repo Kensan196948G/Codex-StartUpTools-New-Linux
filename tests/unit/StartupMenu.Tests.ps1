@@ -85,9 +85,9 @@ Describe "Get-MenuItems" {
         }
     }
 
-    It "診断・管理セクション項目（1〜9）が全て含まれる" {
+    It "診断・管理セクション項目（1〜10）が全て含まれる" {
         $items = Get-MenuItems -Config (New-TestConfig)
-        @('1','2','3','4','5','6','7','8','9') | ForEach-Object {
+        @('1','2','3','4','5','6','7','8','9','10') | ForEach-Object {
             $key = $_
             ($items | Where-Object { $_.Key -eq $key }) | Should -Not -BeNullOrEmpty -Because "Key=$key が見つからない"
         }
@@ -96,6 +96,19 @@ Describe "Get-MenuItems" {
     It "recentProjects.enabled=false の場合 Key=7 が Enabled=false" {
         $items = Get-MenuItems -Config (New-TestConfig -RecentEnabled:$false)
         ($items | Where-Object { $_.Key -eq '7' }).Enabled | Should -BeFalse
+    }
+
+    It "Supervisor レポート項目が含まれる" {
+        $items = Get-MenuItems -Config (New-TestConfig)
+        $report = $items | Where-Object { $_.Action -eq 'supervisor-report' }
+        $report | Should -Not -BeNullOrEmpty
+        $report.Key | Should -Be '9'
+        $report.Enabled | Should -BeTrue
+    }
+
+    It "supervisor.enabled=false の場合 supervisor-report が Enabled=false" {
+        $items = Get-MenuItems -Config (New-TestConfig -SupervisorEnabled:$false)
+        ($items | Where-Object { $_.Action -eq 'supervisor-report' }).Enabled | Should -BeFalse
     }
 }
 

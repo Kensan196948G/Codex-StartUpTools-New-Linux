@@ -98,6 +98,14 @@ function Get-MenuItems {
     })
     $items.Add([pscustomobject]@{
         Key     = '9'
+        Label   = "Supervisor レポート"
+        Note    = "登録プロジェクトの適用状況を一覧表示"
+        Section = $null
+        Action  = 'supervisor-report'
+        Enabled = $Config.supervisor.enabled -eq $true
+    })
+    $items.Add([pscustomobject]@{
+        Key     = '10'
         Label   = "MessageBus ログ確認"
         Note    = "フェーズ遷移・CI メッセージを表示"
         Section = $null
@@ -293,6 +301,9 @@ function Invoke-MenuAction {
         }
         'apply-supervisor' {
             Invoke-SupervisorAction -Config $Config -ProjectRoot $ProjectRoot
+        }
+        'supervisor-report' {
+            Invoke-SupervisorReportAction -Config $Config
         }
         'exit' {
             return $false
@@ -571,6 +582,41 @@ function Invoke-SupervisorAction {
     }
     catch {
         Write-Host "  [ERROR] Supervisor 適用エラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-SupervisorReportAction {
+    param([object]$Config)
+    Write-Host ""
+    try {
+        Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) "lib/SupervisorManager.psm1") -Force -ErrorAction Stop
+        $report = Get-SupervisorReport -Config $Config
+        Write-Host "  Supervisor 適用レポート:" -ForegroundColor Cyan
+        Write-Host ("    Total   : {0}" -f $report.total)
+        Write-Host ("    Managed : {0}" -f $report.managed) -ForegroundColor Green
+        Write-Host ("    Missing : {0}" -f $report.missing) -ForegroundColor Yellow
+        Write-Host ("    Foreign : {0}" -f $report.foreign) -ForegroundColor Magenta
+        Write-Host ("    Invalid : {0}" -f $report.invalid) -ForegroundColor Red
+        Write-Host ""
+
+        $i = 1
+        $report.entries | ForEach-Object {
+            $color = switch ($_.status) {
+                "Managed" { "Green" }
+                "Missing" { "Yellow" }
+                "Foreign" { "Magenta" }
+                "Invalid" { "Red" }
+                default { "White" }
+            }
+            $detail = if ($_.hasSupervisor) { "{0} / {1}" -f $_.managedBy, $_.mode } else { "not applied" }
+            Write-Host ("    {0,2}. [{1,-7}] {2}  ({3})" -f $i, $_.status, $_.project, $detail) -ForegroundColor $color
+            $i++
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] Supervisor レポートエラー: $_" -ForegroundColor Red
     }
     Write-Host ""
     Wait-MenuInput
@@ -895,5 +941,6 @@ Export-ModuleMember -Function @(
     'Get-RecentProjectNames',
     'Show-ProjectSelector',
     'Read-SupervisorProjectSelection',
+    'Invoke-SupervisorReportAction',
     'Select-ProjectInteractive'
 )

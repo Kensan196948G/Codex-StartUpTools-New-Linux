@@ -185,9 +185,97 @@ function Set-SupervisorForRegisteredProjects {
         })
 }
 
+function Get-SupervisorStatusForProject {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Project
+    )
+
+    $projectName = if ($Project.PSObject.Properties["name"]?.Value) { "$($Project.name)" } else { Split-Path -Leaf "$($Project.path)" }
+    $projectPath = "$($Project.path)"
+    $manifestPath = Join-Path $projectPath ".codex/supervisor.json"
+    $exists = Test-Path $manifestPath
+    $manifest = $null
+    $parseError = ""
+
+    if ($exists) {
+        try {
+            $manifest = Get-Content -Path $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            $parseError = "$_"
+        }
+    }
+
+    $managedBy = if ($manifest -and $manifest.PSObject.Properties["managedBy"]?.Value) { "$($manifest.managedBy)" } else { "" }
+    $mode = if ($manifest -and $manifest.PSObject.Properties["mode"]?.Value) { "$($manifest.mode)" } else { "" }
+    $appliedAt = if ($manifest -and $manifest.PSObject.Properties["supervisorAppliedAt"]?.Value) { "$($manifest.supervisorAppliedAt)" } else { "" }
+    $codexOnly = if ($manifest -and $manifest.PSObject.Properties["codexOnly"]?.Value -ne $null) { [bool]$manifest.codexOnly } else { $false }
+    $sshEnabled = if ($manifest -and $manifest.PSObject.Properties["sshEnabled"]?.Value -ne $null) { [bool]$manifest.sshEnabled } else { $false }
+
+    $status = if (-not $exists) {
+        "Missing"
+    }
+    elseif ($parseError) {
+        "Invalid"
+    }
+    elseif ($managedBy -eq "Codex-StartUpTools-New-Linux" -and $codexOnly -and -not $sshEnabled) {
+        "Managed"
+    }
+    else {
+        "Foreign"
+    }
+
+    return [pscustomobject]@{
+        project        = $projectName
+        path           = $projectPath
+        manifestPath   = $manifestPath
+        status         = $status
+        hasSupervisor  = $exists
+        managedBy      = $managedBy
+        mode           = $mode
+        codexOnly      = $codexOnly
+        sshEnabled     = $sshEnabled
+        appliedAt      = $appliedAt
+        parseError     = $parseError
+    }
+}
+
+function Get-SupervisorReport {
+    [CmdletBinding()]
+    [OutputType([System.Object])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    $entries = @(Get-RegisteredProjectCandidate -Config $Config | ForEach-Object {
+            Get-SupervisorStatusForProject -Project $_
+        })
+
+    $managed = @($entries | Where-Object { $_.status -eq "Managed" })
+    $missing = @($entries | Where-Object { $_.status -eq "Missing" })
+    $foreign = @($entries | Where-Object { $_.status -eq "Foreign" })
+    $invalid = @($entries | Where-Object { $_.status -eq "Invalid" })
+
+    return [pscustomobject]@{
+        generatedAt  = (Get-Date).ToString("o")
+        total        = $entries.Count
+        managed      = $managed.Count
+        missing      = $missing.Count
+        foreign      = $foreign.Count
+        invalid      = $invalid.Count
+        entries      = @($entries)
+    }
+}
+
 Export-ModuleMember -Function @(
     "Get-RegisteredProjectRoot",
     "Get-RegisteredProjectCandidate",
+    "Get-SupervisorReport",
+    "Get-SupervisorStatusForProject",
     "New-SupervisorManifest",
     "Set-SupervisorForProject",
     "Set-SupervisorForRegisteredProjects"
