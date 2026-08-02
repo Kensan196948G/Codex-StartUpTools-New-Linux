@@ -1,3 +1,7 @@
+---
+name: "django-security"
+description: "この skill は Django の CSRF、認証認可、ORM 安全性、設定不備を点検する ための実務向けガイドです。"
+---
 # django-security
 
 ## 概要

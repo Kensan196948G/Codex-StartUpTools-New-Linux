@@ -1,3 +1,7 @@
+---
+name: "springboot-tdd"
+description: "この skill は Spring Boot を controller から service まで段階的に TDD する ための実務向けガイドです。"
+---
 # springboot-tdd
 
 ## 概要

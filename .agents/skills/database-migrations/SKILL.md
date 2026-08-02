@@ -1,3 +1,7 @@
+---
+name: "database-migrations"
+description: "この skill は 各種 ORM やフレームワークにおける安全な migration 運用を整理する ための実務向けガイドです。"
+---
 # database-migrations
 
 ## 概要

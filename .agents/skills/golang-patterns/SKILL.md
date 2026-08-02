@@ -1,3 +1,7 @@
+---
+name: "golang-patterns"
+description: "この skill は Go の idiom、context、エラー処理、パッケージ分割を整える ための実務向けガイドです。"
+---
 # golang-patterns
 
 ## 概要

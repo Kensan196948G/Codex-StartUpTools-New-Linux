@@ -6,6 +6,7 @@
 **Linux 用 Codex ネイティブなスタートアップツール群**として再構築するために存在します。
 
 **Codex を主たる開発環境および実装エージェント**として扱います。
+Codex のモデルは **DeepSeek V4** を前提とします。
 
 ## 基本原則
 
@@ -15,7 +16,8 @@
 - docs、scripts、tests を常に同期させる
 - Claude 専用ランタイム依存は削除または置換する
 - SSH 接続起動は対象外とし、Linux ローカル起動へ一本化する
-- `/home/kensan/Projects` 配下の登録プロジェクト候補を Codex 起動対象にする
+- 登録プロジェクト候補は 社内DX（`/home/kensan/Projects/Mirai-Project`）と
+  社外DX（`/home/kensan/Projects/Mirai-DX-Project`）に分けて管理し、Codex 起動対象にする
 - Supervisor は番号選択した登録プロジェクト候補へ適用できる形で実装する
 - 元リポジトリからの変換内容は必ず記録する
 

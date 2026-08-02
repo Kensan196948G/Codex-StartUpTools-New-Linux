@@ -1,3 +1,7 @@
+---
+name: "content-hash-cache-pattern"
+description: "この skill は コンテンツハッシュを使って再処理を避けるキャッシュ戦略を整える ための実務向けガイドです。"
+---
 # content-hash-cache-pattern
 
 ## 概要

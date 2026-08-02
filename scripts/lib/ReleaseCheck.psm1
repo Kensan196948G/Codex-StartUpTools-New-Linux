@@ -113,9 +113,13 @@ function Test-ReleaseConfigTemplate {
             return New-ReleaseCheckResult -Name "Config template" -Ok $false -Detail ($errors -join "; ") -Category "config"
         }
 
-        $root = "$($config.registeredProjects.roots[0])"
-        $isLinuxDefault = $root -eq "/home/kensan/Projects"
-        return New-ReleaseCheckResult -Name "Config template" -Ok $isLinuxDefault -Detail ("registeredProjects.roots[0]={0}" -f $root) -Category "config"
+        $roots = @($config.registeredProjects.roots | ForEach-Object { "$_" })
+        $expectedRoots = @(
+            "/home/kensan/Projects/Mirai-Project",
+            "/home/kensan/Projects/Mirai-DX-Project"
+        )
+        $hasExpectedRoots = @($expectedRoots | Where-Object { $_ -notin $roots }).Count -eq 0
+        return New-ReleaseCheckResult -Name "Config template" -Ok $hasExpectedRoots -Detail ("registeredProjects.roots={0}" -f ($roots -join ", ")) -Category "config"
     }
     catch {
         return New-ReleaseCheckResult -Name "Config template" -Ok $false -Detail "$_" -Category "config"

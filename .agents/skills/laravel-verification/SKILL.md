@@ -1,3 +1,7 @@
+---
+name: "laravel-verification"
+description: "この skill は Laravel の route、policy、queue、DB 更新を検証する ための実務向けガイドです。"
+---
 # laravel-verification
 
 ## 概要

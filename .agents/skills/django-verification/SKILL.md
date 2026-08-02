@@ -1,3 +1,7 @@
+---
+name: "django-verification"
+description: "この skill は Django の migration、permission、API、画面の検証を回す ための実務向けガイドです。"
+---
 # django-verification
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "foundation-models-on-device"
+description: "この skill は Apple のオンデバイス Foundation Models 活用設計を支援する ための実務向けガイドです。"
+---
 # foundation-models-on-device
 
 ## 概要

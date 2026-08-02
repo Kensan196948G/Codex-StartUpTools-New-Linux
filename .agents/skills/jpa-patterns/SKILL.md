@@ -1,3 +1,7 @@
+---
+name: "jpa-patterns"
+description: "この skill は JPA と Hibernate の entity、fetch、transaction、query 設計を整理する ための実務向けガイドです。"
+---
 # jpa-patterns
 
 ## 概要

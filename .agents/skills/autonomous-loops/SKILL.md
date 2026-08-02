@@ -1,3 +1,7 @@
+---
+name: "autonomous-loops"
+description: "この skill は 逐次ループ、PR ループ、DAG 型オーケストレーションを設計する ための実務向けガイドです。"
+---
 # autonomous-loops
 
 ## 概要

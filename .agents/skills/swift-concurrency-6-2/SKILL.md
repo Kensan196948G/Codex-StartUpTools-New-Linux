@@ -1,3 +1,7 @@
+---
+name: "swift-concurrency-6-2"
+description: "この skill は Swift 6.2 の concurrency を安全かつ段階的に導入する ための実務向けガイドです。"
+---
 # swift-concurrency-6-2
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "plankton-code-quality"
+description: "この skill は 保存時や実装時に品質を前倒し確保するフック連携を整える ための実務向けガイドです。"
+---
 # plankton-code-quality
 
 ## 概要

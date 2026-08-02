@@ -1,3 +1,7 @@
+---
+name: "django-patterns"
+description: "この skill は Django の models、views、service 層、管理画面設計を整理する ための実務向けガイドです。"
+---
 # django-patterns
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "content-engine"
+description: "この skill は 1 つの原稿から複数媒体向けの投稿や配信用コンテンツへ再構成する ための実務向けガイドです。"
+---
 # content-engine
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "frontend-patterns"
+description: "この skill は React と Next.js を中心に画面設計、状態管理、UI 分割、アクセシビリティを整理する ための実務向けガイドです。"
+---
 # frontend-patterns
 
 ## 概要

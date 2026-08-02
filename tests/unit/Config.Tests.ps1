@@ -7,7 +7,7 @@ BeforeAll {
             projectsDir        = "/home/kensan/Projects"
             registeredProjects = @{
                 enabled       = $true
-                roots         = @("/home/kensan/Projects")
+                roots         = @("/home/kensan/Projects/Mirai-Project", "/home/kensan/Projects/Mirai-DX-Project")
                 include       = @()
                 exclude       = @()
                 maxCandidates = 80
@@ -17,7 +17,7 @@ BeforeAll {
                 codex       = @{
                     enabled        = $true
                     command        = "codex"
-                    args           = @("--full-auto")
+                    args           = @("--dangerously-bypass-approvals-and-sandbox")
                     installCommand = "install-codex"
                     env            = @{ OPENAI_API_KEY = "" }
                     apiKeyEnvVar   = "OPENAI_API_KEY"

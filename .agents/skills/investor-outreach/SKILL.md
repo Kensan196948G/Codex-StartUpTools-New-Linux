@@ -1,3 +1,7 @@
+---
+name: "investor-outreach"
+description: "この skill は 投資家や候補先への個別連絡文、フォローアップ文面を整える ための実務向けガイドです。"
+---
 # investor-outreach
 
 ## 概要

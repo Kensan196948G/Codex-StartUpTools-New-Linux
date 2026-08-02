@@ -8,6 +8,43 @@ $script:MenuSubtitle = "Linux / Codex only / Supervisor ready"
 # メニュー定義
 # ---------------------------------------------------------------
 
+function Get-StartupProjectsDir {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    if ($Config.projectsDir) {
+        return $Config.projectsDir
+    }
+    if ($env:HOME) {
+        return (Join-Path $env:HOME "Projects")
+    }
+
+    return "/home/kensan/Projects"
+}
+
+function Get-StartupRegisteredProjectRoot {
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    $registered = $Config.PSObject.Properties["registeredProjects"]?.Value
+    if ($null -ne $registered -and $registered.PSObject.Properties["roots"]?.Value) {
+        $roots = @($registered.roots | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") })
+        if ($roots.Count -gt 0) {
+            return $roots
+        }
+    }
+
+    return @(Get-StartupProjectsDir -Config $Config)
+}
+
 function Get-MenuItems {
     [CmdletBinding()]
     param(
@@ -15,19 +52,23 @@ function Get-MenuItems {
         [object]$Config
     )
 
-    $localDir = if ($Config.projectsDir) { $Config.projectsDir } elseif ($env:HOME) { Join-Path $env:HOME "Projects" } else { "/home/kensan/Projects" }
+    $registeredRoots = @(Get-StartupRegisteredProjectRoot -Config $Config)
 
     $items = [System.Collections.Generic.List[pscustomobject]]::new()
 
     # --- ローカルセクション ---
-    $items.Add([pscustomobject]@{
-        Key     = 'L1'
-        Label   = "Codex を起動"
-        Note    = "Linux ($localDir) / full-auto"
-        Section = "Linux registered projects ($localDir)"
-        Action  = 'launch-local-codex'
-        Enabled = $true
-    })
+    for ($i = 0; $i -lt $registeredRoots.Count; $i++) {
+        $root = $registeredRoots[$i]
+        $items.Add([pscustomobject]@{
+            Key        = "L$($i + 1)"
+            Label      = "Codex を起動"
+            Note       = "Linux ($root) / YOLO"
+            Section    = "Linux registered projects ($root)"
+            Action     = 'launch-local-codex'
+            Enabled    = $true
+            LaunchRoot = $root
+        })
+    }
 
     # --- 診断・セットアップセクション ---
     $items.Add([pscustomobject]@{
@@ -322,7 +363,8 @@ function Invoke-MenuAction {
             Invoke-MessageBusAction -StatePath $StatePath
         }
         'launch-local-codex' {
-            Invoke-LaunchAction -Config $Config -Tool 'codex' -Mode 'local' -ProjectRoot $ProjectRoot
+            $launchRoot = $Item.PSObject.Properties["LaunchRoot"]?.Value
+            Invoke-LaunchAction -Config $Config -Tool 'codex' -Mode 'local' -ProjectRoot $ProjectRoot -LaunchRoot $launchRoot
         }
         'apply-supervisor' {
             Invoke-SupervisorAction -Config $Config -ProjectRoot $ProjectRoot
@@ -488,7 +530,7 @@ function Get-RecentRestartCandidate {
         $entries = @($entries | Where-Object { $_.mode -eq $Mode })
     }
 
-    $localBase = if ($Config.projectsDir) { $Config.projectsDir } elseif ($env:HOME) { Join-Path $env:HOME "Projects" } else { "/home/kensan/Projects" }
+    $registeredRoots = @(Get-StartupRegisteredProjectRoot -Config $Config)
     $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $candidates = [System.Collections.Generic.List[object]]::new()
 
@@ -501,7 +543,17 @@ function Get-RecentRestartCandidate {
             continue
         }
 
-        $projectPath = Join-Path $localBase $projectName
+        $projectPath = ""
+        foreach ($root in $registeredRoots) {
+            $candidate = Join-Path $root $projectName
+            if (Test-Path $candidate) {
+                $projectPath = $candidate
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($projectPath)) {
+            $projectPath = Join-Path (Get-StartupProjectsDir -Config $Config) $projectName
+        }
         $candidates.Add([pscustomobject]@{
             project   = $projectName
             path      = $projectPath
@@ -1170,12 +1222,13 @@ function Select-ProjectInteractive {
         [object]$Config,
 
         [string]$Mode      = 'local',
-        [string]$Tool      = 'codex'
+        [string]$Tool      = 'codex',
+        [string]$BaseDir   = ''
     )
 
     $historyPath = $Config.recentProjects.historyFile
 
-    $localBase = if ($Config.projectsDir) { $Config.projectsDir } elseif ($env:HOME) { Join-Path $env:HOME "Projects" } else { "/home/kensan/Projects" }
+    $localBase = if (-not [string]::IsNullOrWhiteSpace($BaseDir)) { $BaseDir } else { Get-StartupProjectsDir -Config $Config }
 
     $allProjects    = @(Get-LocalProjectList -BaseDir $localBase)
     $recentProjects = @(Get-RecentProjectNames -HistoryPath $historyPath -Tool $Tool -Mode 'local')
@@ -1191,7 +1244,8 @@ function Invoke-LaunchAction {
         [object]$Config,
         [string]$Tool,
         [string]$Mode,
-        [string]$ProjectRoot
+        [string]$ProjectRoot,
+        [string]$LaunchRoot = ''
     )
 
     Write-Host ""
@@ -1207,7 +1261,7 @@ function Invoke-LaunchAction {
     }
 
     $cmd  = $toolConfig.command
-    $toolArgs = @($toolConfig.args)
+    $toolArgs = @(Resolve-CodexLaunchArguments -Arguments @($toolConfig.args))
 
     # コマンド存在確認
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
@@ -1218,13 +1272,24 @@ function Invoke-LaunchAction {
         return
     }
 
-    $localBase = if ($Config.projectsDir) { $Config.projectsDir } elseif ($env:HOME) { Join-Path $env:HOME "Projects" } else { "/home/kensan/Projects" }
+    $localBase = if (-not [string]::IsNullOrWhiteSpace($LaunchRoot)) { $LaunchRoot } else { Get-StartupProjectsDir -Config $Config }
 
-    $project = Select-ProjectInteractive -Config $Config -Mode 'local' -Tool $Tool
+    $project = Select-ProjectInteractive -Config $Config -Mode 'local' -Tool $Tool -BaseDir $localBase
     $workDir = if ([string]::IsNullOrWhiteSpace($project)) {
         $localBase
     } else {
-        Join-Path $localBase $project
+        $resolved = ""
+        foreach ($root in @(Get-StartupRegisteredProjectRoot -Config $Config)) {
+            $candidate = Join-Path $root $project
+            if (Test-Path $candidate) {
+                $resolved = $candidate
+                break
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($resolved)) {
+            $resolved = Join-Path $localBase $project
+        }
+        $resolved
     }
 
     if (-not (Test-Path $workDir)) {
@@ -1237,16 +1302,7 @@ function Invoke-LaunchAction {
     Write-Host ("  {0} を起動します: {1}" -f $cmd, $workDir) -ForegroundColor Green
     Write-Host ""
 
-    $previous = Get-Location
-    try {
-        Set-Location $workDir
-
-        & $cmd @toolArgs
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        Set-Location $previous
-    }
+    $exitCode = Invoke-InteractiveNativeCommand -FilePath $cmd -Arguments $toolArgs -WorkingDirectory $workDir
 
     Write-Host ""
     if ($exitCode -ne 0) {

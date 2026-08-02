@@ -8,7 +8,7 @@ BeforeAll {
             projectsDir        = "/home/kensan/Projects"
             registeredProjects = [pscustomobject]@{
                 enabled       = $true
-                roots         = @("/home/kensan/Projects")
+                roots         = @("/home/kensan/Projects/Mirai-Project", "/home/kensan/Projects/Mirai-DX-Project")
                 include       = @()
                 exclude       = @()
                 categories    = [pscustomobject]@{}
@@ -19,7 +19,7 @@ BeforeAll {
                 codex       = [pscustomobject]@{
                     enabled        = $true
                     command        = "codex"
-                    args           = @("--full-auto")
+                    args           = @("--dangerously-bypass-approvals-and-sandbox")
                     installCommand = "npm install -g @openai/codex"
                     env            = [pscustomobject]@{}
                     apiKeyEnvVar   = "OPENAI_API_KEY"

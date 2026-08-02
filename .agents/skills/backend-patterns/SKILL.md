@@ -1,3 +1,7 @@
+---
+name: "backend-patterns"
+description: "この skill は API、DB、キャッシュ、非同期処理、認証認可を含むバックエンド設計の標準を示す ための実務向けガイドです。"
+---
 # backend-patterns
 
 ## 概要

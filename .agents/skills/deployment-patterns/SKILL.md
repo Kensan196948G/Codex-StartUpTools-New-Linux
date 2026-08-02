@@ -1,3 +1,7 @@
+---
+name: "deployment-patterns"
+description: "この skill は CI/CD、環境差異、ヘルスチェック、ロールバックを設計する ための実務向けガイドです。"
+---
 # deployment-patterns
 
 ## 概要

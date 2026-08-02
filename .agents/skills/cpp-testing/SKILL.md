@@ -1,3 +1,7 @@
+---
+name: "cpp-testing"
+description: "この skill は GoogleTest、CMake、CTest を使った C++ テスト戦略を整える ための実務向けガイドです。"
+---
 # cpp-testing
 
 ## 概要

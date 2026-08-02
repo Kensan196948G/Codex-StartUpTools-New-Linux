@@ -1,3 +1,7 @@
+---
+name: "continuous-learning"
+description: "この skill は セッションから学びを抽出して再利用可能な知見へまとめる ための実務向けガイドです。"
+---
 # continuous-learning
 
 ## 概要

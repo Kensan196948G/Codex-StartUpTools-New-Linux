@@ -1,3 +1,7 @@
+---
+name: "article-writing"
+description: "この skill は 自然で読みやすい長文記事、技術解説、社内ナレッジ文書を作成する ための実務向けガイドです。"
+---
 # article-writing
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "springboot-security"
+description: "この skill は Spring Security、認可、シークレット、設定分離を点検する ための実務向けガイドです。"
+---
 # springboot-security
 
 ## 概要

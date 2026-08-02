@@ -56,7 +56,7 @@ Describe "Test-ReleaseReadmeRequirement" {
 }
 
 Describe "Test-ReleaseConfigTemplate" {
-    It "Linux既定の config template を pass とする" {
+    It "Mirai 2ルート既定の config template を pass とする" {
         $configDir = Join-Path $TestDrive "config"
         New-Item -ItemType Directory -Path $configDir | Out-Null
         Copy-Item -Path (Join-Path $script:RepoRoot "config/config.json.template") -Destination (Join-Path $configDir "config.json.template")
@@ -64,7 +64,8 @@ Describe "Test-ReleaseConfigTemplate" {
         $result = Test-ReleaseConfigTemplate -ProjectRoot $TestDrive
 
         $result.Ok | Should -BeTrue
-        $result.Detail | Should -Match "/home/kensan/Projects"
+        $result.Detail | Should -Match "/home/kensan/Projects/Mirai-Project"
+        $result.Detail | Should -Match "/home/kensan/Projects/Mirai-DX-Project"
     }
 }
 

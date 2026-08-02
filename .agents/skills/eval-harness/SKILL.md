@@ -1,3 +1,7 @@
+---
+name: "eval-harness"
+description: "この skill は 評価ハーネス、採点基準、実験条件、再現可能な検証を整備する ための実務向けガイドです。"
+---
 # eval-harness
 
 ## 概要

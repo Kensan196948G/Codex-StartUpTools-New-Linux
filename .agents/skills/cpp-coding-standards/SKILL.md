@@ -1,3 +1,7 @@
+---
+name: "cpp-coding-standards"
+description: "この skill は C++ Core Guidelines を踏まえた安全な設計と実装を支援する ための実務向けガイドです。"
+---
 # cpp-coding-standards
 
 ## 概要

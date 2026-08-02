@@ -1,3 +1,7 @@
+---
+name: "java-coding-standards"
+description: "この skill は Java の命名、例外、レイヤ分離、読みやすい実装基準を揃える ための実務向けガイドです。"
+---
 # java-coding-standards
 
 ## 概要

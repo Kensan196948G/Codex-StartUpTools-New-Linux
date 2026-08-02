@@ -6,14 +6,6 @@ args = [
 command = "npx"
 env_vars = ["CONTEXT7_API_KEY"]
 
-[mcp_servers.github]
-args = [
-    "-y",
-    "@anthropic/mcp-server-github",
-]
-command = "npx"
-env_vars = ["GITHUB_TOKEN"]
-
 [mcp_servers.sequential-thinking]
 args = [
     "-y",

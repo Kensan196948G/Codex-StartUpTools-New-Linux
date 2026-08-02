@@ -1,3 +1,7 @@
+---
+name: "python-patterns"
+description: "この skill は Python の型、例外、責務分割、保守しやすい構成を整理する ための実務向けガイドです。"
+---
 # python-patterns
 
 ## 概要

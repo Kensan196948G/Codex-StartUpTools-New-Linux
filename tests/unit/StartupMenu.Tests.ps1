@@ -58,6 +58,19 @@ Describe "Get-MenuItems" {
         $l1.Action | Should -Be 'launch-local-codex'
     }
 
+    It "登録 root が複数ある場合はローカル Codex 起動項目を root ごとに分ける" {
+        $config = New-TestConfig
+        $config.registeredProjects.roots = @(
+            "/home/kensan/Projects/Mirai-Project",
+            "/home/kensan/Projects/Mirai-DX-Project"
+        )
+
+        $items = Get-MenuItems -Config $config
+        ($items | Where-Object { $_.Key -eq 'L1' }).Section | Should -Be "Linux registered projects (/home/kensan/Projects/Mirai-Project)"
+        ($items | Where-Object { $_.Key -eq 'L2' }).Section | Should -Be "Linux registered projects (/home/kensan/Projects/Mirai-DX-Project)"
+        ($items | Where-Object { $_.Key -eq 'L2' }).LaunchRoot | Should -Be "/home/kensan/Projects/Mirai-DX-Project"
+    }
+
     It "Supervisor 適用項目が含まれる" {
         $items = Get-MenuItems -Config (New-TestConfig)
         $supervisor = $items | Where-Object { $_.Action -eq 'apply-supervisor' }
@@ -265,6 +278,24 @@ Describe "Recent project restart helpers" {
         $result[0].project | Should -Be "Alpha"
         $result[0].exists | Should -BeTrue
         ($result | Where-Object project -eq "MissingProject").exists | Should -BeFalse
+    }
+
+    It "登録 root が複数ある場合は各 root 配下のプロジェクトを解決する" {
+        $internalRoot = Join-Path $TestDrive "mirai-internal"
+        $externalRoot = Join-Path $TestDrive "mirai-external"
+        New-Item -ItemType Directory -Path (Join-Path $internalRoot "Alpha") -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $externalRoot "Beta") -Force | Out-Null
+
+        $config = New-TestConfig -ProjectsDir $TestDrive
+        $config.registeredProjects.roots = @($internalRoot, $externalRoot)
+        $config.recentProjects.historyFile = $script:RecentPath
+
+        $result = @(Get-RecentRestartCandidate -Config $config -HistoryPath $script:RecentPath -Tool "codex" -Mode "local")
+
+        ($result | Where-Object project -eq "Alpha").path | Should -Be (Join-Path $internalRoot "Alpha")
+        ($result | Where-Object project -eq "Alpha").exists | Should -BeTrue
+        ($result | Where-Object project -eq "Beta").path | Should -Be (Join-Path $externalRoot "Beta")
+        ($result | Where-Object project -eq "Beta").exists | Should -BeTrue
     }
 
     It "番号選択を再起動候補へ解決する" {

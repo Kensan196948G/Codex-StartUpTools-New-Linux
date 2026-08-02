@@ -1,3 +1,7 @@
+---
+name: "postgres-patterns"
+description: "この skill は PostgreSQL のクエリ最適化、インデックス、ロック、移行運用を扱う ための実務向けガイドです。"
+---
 # postgres-patterns
 
 ## 概要

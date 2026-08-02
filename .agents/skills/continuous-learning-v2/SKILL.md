@@ -1,3 +1,7 @@
+---
+name: "continuous-learning-v2"
+description: "この skill は 学びを信頼度付きで記録し、採用候補と保留候補を分けて管理する ための実務向けガイドです。"
+---
 # continuous-learning-v2
 
 ## 概要

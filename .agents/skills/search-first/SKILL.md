@@ -1,3 +1,7 @@
+---
+name: "search-first"
+description: "この skill は 実装前に既存コード、仕様、外部資料を優先的に調べる ための実務向けガイドです。"
+---
 # search-first
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "python-testing"
+description: "この skill は pytest による fixture、parametrize、integration test を支援する ための実務向けガイドです。"
+---
 # python-testing
 
 ## 概要

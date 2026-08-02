@@ -1,3 +1,7 @@
+---
+name: "tdd-workflow"
+description: "この skill は Red、Green、Refactor の流れで安全に実装を進める ための実務向けガイドです。"
+---
 # tdd-workflow
 
 ## 概要
