@@ -1,3 +1,7 @@
+---
+name: "security-scan"
+description: "この skill は 静的解析、依存監査、設定監査をまとめて実行する ための実務向けガイドです。"
+---
 # security-scan
 
 ## 概要

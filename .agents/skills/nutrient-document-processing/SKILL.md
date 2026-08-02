@@ -1,3 +1,7 @@
+---
+name: "nutrient-document-processing"
+description: "この skill は Nutrient API を使った文書抽出、変換、構造化を支援する ための実務向けガイドです。"
+---
 # nutrient-document-processing
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "coding-standards"
+description: "この skill は 言語共通のコーディング規約、責務分離、命名、コメント、可読性を整える ための実務向けガイドです。"
+---
 # coding-standards
 
 ## 概要

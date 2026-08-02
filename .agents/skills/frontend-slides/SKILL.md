@@ -1,3 +1,7 @@
+---
+name: "frontend-slides"
+description: "この skill は HTML スライド、プレゼン資料、PPTX 代替の Web ベース資料作成を支援する ための実務向けガイドです。"
+---
 # frontend-slides
 
 ## 概要

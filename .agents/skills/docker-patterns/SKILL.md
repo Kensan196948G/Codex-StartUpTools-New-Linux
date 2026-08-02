@@ -1,3 +1,7 @@
+---
+name: "docker-patterns"
+description: "この skill は Docker Compose、ネットワーク、ボリューム、コンテナセキュリティを扱う ための実務向けガイドです。"
+---
 # docker-patterns
 
 ## 概要

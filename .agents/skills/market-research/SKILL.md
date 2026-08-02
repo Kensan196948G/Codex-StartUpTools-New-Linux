@@ -1,3 +1,7 @@
+---
+name: "market-research"
+description: "この skill は 市場調査、競合比較、一次情報に基づく外部環境分析を行う ための実務向けガイドです。"
+---
 # market-research
 
 ## 概要

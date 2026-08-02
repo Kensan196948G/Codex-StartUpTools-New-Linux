@@ -1,3 +1,7 @@
+---
+name: "videodb"
+description: "この skill は 動画、音声、字幕、検索、編集、生成のワークフローを扱う ための実務向けガイドです。"
+---
 # videodb
 
 ## 概要

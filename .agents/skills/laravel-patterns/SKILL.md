@@ -1,3 +1,7 @@
+---
+name: "laravel-patterns"
+description: "この skill は Laravel の controller、service、job、policy、Eloquent 設計を整える ための実務向けガイドです。"
+---
 # laravel-patterns
 
 ## 概要

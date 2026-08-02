@@ -1,3 +1,7 @@
+---
+name: "iterative-retrieval"
+description: "この skill は 必要な文脈だけを段階的に掘り下げ、過剰読込を防ぐ ための実務向けガイドです。"
+---
 # iterative-retrieval
 
 ## 概要

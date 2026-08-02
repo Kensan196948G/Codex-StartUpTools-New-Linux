@@ -1,3 +1,7 @@
+---
+name: "perl-security"
+description: "この skill は Perl の taint mode、安全な I/O、外部入力の取り扱いを整理する ための実務向けガイドです。"
+---
 # perl-security
 
 ## 概要

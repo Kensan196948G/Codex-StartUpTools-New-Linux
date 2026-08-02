@@ -1,3 +1,7 @@
+---
+name: "clickhouse-io"
+description: "この skill は ClickHouse のテーブル設計、分析クエリ、集計基盤、データエンジニアリングを支援する ための実務向けガイドです。"
+---
 # clickhouse-io
 
 ## 概要

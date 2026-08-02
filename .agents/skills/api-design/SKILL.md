@@ -1,3 +1,7 @@
+---
+name: "api-design"
+description: "この skill は REST API の契約、ページネーション、互換性、エラー応答を設計する ための実務向けガイドです。"
+---
 # api-design
 
 ## 概要

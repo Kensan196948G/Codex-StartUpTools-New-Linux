@@ -1,3 +1,7 @@
+---
+name: "perl-testing"
+description: "この skill は Perl の Test2::V0、prove、カバレッジ計測を支援する ための実務向けガイドです。"
+---
 # perl-testing
 
 ## 概要

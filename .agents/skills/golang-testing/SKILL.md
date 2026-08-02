@@ -1,3 +1,7 @@
+---
+name: "golang-testing"
+description: "この skill は Go の unit test、table-driven test、benchmark、TDD を支援する ための実務向けガイドです。"
+---
 # golang-testing
 
 ## 概要

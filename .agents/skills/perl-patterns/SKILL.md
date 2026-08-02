@@ -1,3 +1,7 @@
+---
+name: "perl-patterns"
+description: "この skill は Modern Perl の責務分離、モジュール設計、読みやすい実装を扱う ための実務向けガイドです。"
+---
 # perl-patterns
 
 ## 概要

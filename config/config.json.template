@@ -5,7 +5,8 @@
   "registeredProjects": {
     "enabled": true,
     "roots": [
-      "/home/kensan/Projects"
+      "/home/kensan/Projects/Mirai-Project",
+      "/home/kensan/Projects/Mirai-DX-Project"
     ],
     "include": [],
     "exclude": [],
@@ -18,7 +19,7 @@
       "enabled": true,
       "command": "codex",
       "args": [
-        "--full-auto"
+        "--dangerously-bypass-approvals-and-sandbox"
       ],
       "installCommand": "npm install -g @openai/codex",
       "env": {

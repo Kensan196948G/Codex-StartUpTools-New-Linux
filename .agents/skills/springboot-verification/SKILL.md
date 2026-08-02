@@ -1,3 +1,7 @@
+---
+name: "springboot-verification"
+description: "この skill は Spring Boot の起動、統合試験、DB 接続、主要 API の検証を行う ための実務向けガイドです。"
+---
 # springboot-verification
 
 ## 概要

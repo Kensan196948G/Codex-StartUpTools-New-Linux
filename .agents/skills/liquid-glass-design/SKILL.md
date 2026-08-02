@@ -1,3 +1,7 @@
+---
+name: "liquid-glass-design"
+description: "この skill は Liquid Glass 系の UI 指針に沿って画面設計を整える ための実務向けガイドです。"
+---
 # liquid-glass-design
 
 ## 概要

@@ -1,3 +1,7 @@
+---
+name: "swift-actor-persistence"
+description: "この skill は Swift actor を用いた安全な永続化と競合回避を扱う ための実務向けガイドです。"
+---
 # swift-actor-persistence
 
 ## 概要

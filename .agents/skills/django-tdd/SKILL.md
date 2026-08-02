@@ -1,3 +1,7 @@
+---
+name: "django-tdd"
+description: "この skill は Django をテスト先行で安全に実装する ための実務向けガイドです。"
+---
 # django-tdd
 
 ## 概要

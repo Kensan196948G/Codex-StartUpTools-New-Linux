@@ -1,3 +1,7 @@
+---
+name: "springboot-patterns"
+description: "この skill は Spring Boot の層構造、DI、設定管理、トランザクションを整理する ための実務向けガイドです。"
+---
 # springboot-patterns
 
 ## 概要

@@ -20,8 +20,8 @@
 |---|---|---|
 | ✅ | 対象OS | Linux / PowerShell 7+ |
 | ✅ | 起動入口 | `./start.sh` |
-| ✅ | Codex起動 | `/home/kensan/Projects` 配下の候補を番号選択 |
-| ✅ | 自律モード | `--full-auto` + `cto-autonomous` |
+| ✅ | Codex起動（DeepSeek V4） | 社内DX / 社外DX 配下の候補を番号選択 |
+| ✅ | 自律モード | `--dangerously-bypass-approvals-and-sandbox` + `cto-autonomous` |
 | ✅ | Supervisor適用 | 番号付き個別選択、preview、`yes` 確認 |
 | ✅ | Supervisorレポート | 登録プロジェクトの `Managed / Missing / Foreign / Invalid` 集計 |
 | ✅ | Supervisor差分表示 | 上書き前に既存manifestとの差分を表示 |
@@ -80,11 +80,11 @@ sequenceDiagram
 
     Human->>Menu: ./start.sh
     Menu->>Config: registeredProjects.roots を読む
-    Config-->>Menu: /home/kensan/Projects 配下の候補
+    Config-->>Menu: 社内DX / 社外DX 配下の候補
     Human->>Menu: 番号でプロジェクト選択
     Menu->>Launcher: -Project <name>
     Launcher->>Launcher: preflight / state / logs
-    Launcher->>Codex: codex --full-auto
+    Launcher->>Codex: codex --dangerously-bypass-approvals-and-sandbox
 ```
 
 ## 🛡️ Supervisor運用
@@ -188,7 +188,10 @@ flowchart TD
 ```json
 {
   "registeredProjects": {
-    "roots": ["/home/kensan/Projects"],
+    "roots": [
+      "/home/kensan/Projects/Mirai-Project",
+      "/home/kensan/Projects/Mirai-DX-Project"
+    ],
     "include": [],
     "exclude": ["ArchivedProject"],
     "categories": {
@@ -261,7 +264,9 @@ pwsh scripts/main/Start-Codex.ps1 -Project Codex-StartUpTools-New-Linux -DryRun 
 pwsh scripts/main/Start-CodexBootstrap.ps1 -DryRun
 ```
 
-`registeredProjects.roots` の既定値は `/home/kensan/Projects` です。直下フォルダが登録プロジェクト候補として扱われます。
+`registeredProjects.roots` の既定値は `/home/kensan/Projects/Mirai-Project` と `/home/kensan/Projects/Mirai-DX-Project` です。
+社内DXプロジェクトは `Mirai-Project`、社外DXプロジェクトは `Mirai-DX-Project` として分離管理し、
+各ルート直下のフォルダが登録プロジェクト候補として扱われます。
 
 ## 🧪 検証コマンド
 

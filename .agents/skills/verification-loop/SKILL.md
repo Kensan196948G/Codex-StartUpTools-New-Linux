@@ -1,3 +1,7 @@
+---
+name: "verification-loop"
+description: "この skill は 変更近傍から全体へ広げる継続的検証ループを運用する ための実務向けガイドです。"
+---
 # verification-loop
 
 ## 概要

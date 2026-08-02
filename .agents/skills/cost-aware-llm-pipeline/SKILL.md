@@ -1,3 +1,7 @@
+---
+name: "cost-aware-llm-pipeline"
+description: "この skill は モデル選択、ルーティング、トークン費用、予算上限を意識した LLM パイプラインを構成する ための実務向けガイドです。"
+---
 # cost-aware-llm-pipeline
 
 ## 概要

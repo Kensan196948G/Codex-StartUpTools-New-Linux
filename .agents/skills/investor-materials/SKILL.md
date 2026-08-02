@@ -1,3 +1,7 @@
+---
+name: "investor-materials"
+description: "この skill は ピッチ資料、1 ページ要約、投資家向け説明資料を構成する ための実務向けガイドです。"
+---
 # investor-materials
 
 ## 概要

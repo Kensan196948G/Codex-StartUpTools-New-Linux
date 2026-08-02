@@ -1,3 +1,7 @@
+---
+name: "configure-ecc"
+description: "この skill は everything-Codex の初期導入と設定整備を支援する ための実務向けガイドです。"
+---
 # configure-ecc
 
 ## 概要

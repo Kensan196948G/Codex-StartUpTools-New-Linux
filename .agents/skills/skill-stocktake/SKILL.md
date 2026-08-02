@@ -1,3 +1,7 @@
+---
+name: "skill-stocktake"
+description: "この skill は 既存 skills と commands の重複、不足、品質差を棚卸しする ための実務向けガイドです。"
+---
 # skill-stocktake
 
 ## 概要

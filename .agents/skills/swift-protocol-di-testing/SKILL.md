@@ -1,3 +1,7 @@
+---
+name: "swift-protocol-di-testing"
+description: "この skill は Swift の protocol ベース DI とテスト容易性向上を支援する ための実務向けガイドです。"
+---
 # swift-protocol-di-testing
 
 ## 概要

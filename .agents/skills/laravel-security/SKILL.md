@@ -1,3 +1,7 @@
+---
+name: "laravel-security"
+description: "この skill は Laravel の認可、バリデーション、mass assignment、秘密情報管理を扱う ための実務向けガイドです。"
+---
 # laravel-security
 
 ## 概要

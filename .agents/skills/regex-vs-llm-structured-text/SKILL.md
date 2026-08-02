@@ -1,3 +1,7 @@
+---
+name: "regex-vs-llm-structured-text"
+description: "この skill は 正規表現と LLM のどちらで構造化テキスト処理すべきか判断する ための実務向けガイドです。"
+---
 # regex-vs-llm-structured-text
 
 ## 概要

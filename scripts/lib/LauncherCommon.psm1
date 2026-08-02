@@ -35,6 +35,181 @@ function Import-LauncherConfig {
     return (Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json)
 }
 
+function Get-RegisteredProjectRoots {
+    [CmdletBinding()]
+    [OutputType([System.String[]])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config
+    )
+
+    $registered = $Config.PSObject.Properties["registeredProjects"]?.Value
+    if ($null -ne $registered -and $registered.PSObject.Properties["roots"]?.Value) {
+        $roots = @($registered.roots | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") })
+        if ($roots.Count -gt 0) {
+            return $roots
+        }
+    }
+
+    $projectsDir = $Config.PSObject.Properties["projectsDir"]?.Value
+    if (-not [string]::IsNullOrWhiteSpace($projectsDir)) {
+        return @("$projectsDir")
+    }
+
+    return @()
+}
+
+function Resolve-ProjectPath {
+    [CmdletBinding()]
+    [OutputType([System.String])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Config,
+
+        [Parameter(Mandatory)]
+        [string]$ProjectName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProjectName)) {
+        return ""
+    }
+
+    foreach ($root in @(Get-RegisteredProjectRoots -Config $Config)) {
+        $candidate = Join-Path $root $ProjectName
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    $projectsDir = $Config.PSObject.Properties["projectsDir"]?.Value
+    if (-not [string]::IsNullOrWhiteSpace($projectsDir)) {
+        return (Join-Path $projectsDir $ProjectName)
+    }
+
+    return ""
+}
+
+function Resolve-CodexLaunchArguments {
+    [CmdletBinding()]
+    [OutputType([System.String[]])]
+    param(
+        [AllowNull()]
+        [string[]]$Arguments
+    )
+
+    $resolved = @()
+    foreach ($arg in @($Arguments)) {
+        switch ($arg) {
+            "--full-auto" {
+                $resolved += "--dangerously-bypass-approvals-and-sandbox"
+            }
+            "--yolo" {
+                $resolved += "--dangerously-bypass-approvals-and-sandbox"
+            }
+            default {
+                $resolved += "$arg"
+            }
+        }
+    }
+
+    return @($resolved)
+}
+
+function ConvertTo-PosixShellArgument {
+    [CmdletBinding()]
+    [OutputType([System.String])]
+    param(
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ($null -eq $Value) {
+        return "''"
+    }
+
+    return "'" + ($Value -replace "'", "'\''") + "'"
+}
+
+function Start-NativeProcessWithArgumentList {
+    [CmdletBinding()]
+    [OutputType([System.Int32])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$FilePath,
+
+        [AllowNull()]
+        [string[]]$Arguments,
+
+        [AllowNull()]
+        [string]$WorkingDirectory = ""
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $startInfo.WorkingDirectory = $WorkingDirectory
+    }
+    foreach ($arg in @($Arguments)) {
+        [void]$startInfo.ArgumentList.Add($arg)
+    }
+
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $process.WaitForExit()
+    return [int]$process.ExitCode
+}
+
+function Invoke-InteractiveNativeCommand {
+    [CmdletBinding()]
+    [OutputType([System.Int32])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$FilePath,
+
+        [AllowNull()]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory
+    )
+
+    if (-not (Test-Path $WorkingDirectory)) {
+        throw "作業ディレクトリが見つかりません: $WorkingDirectory"
+    }
+
+    $commandInfo = Get-Command $FilePath -ErrorAction Stop
+    $commandPath = if ($commandInfo.PSObject.Properties.Name -contains "Source" -and $commandInfo.Source) {
+        "$($commandInfo.Source)"
+    }
+    else {
+        $FilePath
+    }
+
+    $scriptCommand = Get-Command "script" -ErrorAction SilentlyContinue
+    if ([Console]::IsOutputRedirected -and $scriptCommand) {
+        $parts = @(
+            "cd",
+            "--",
+            (ConvertTo-PosixShellArgument -Value $WorkingDirectory),
+            "&&",
+            "exec",
+            (ConvertTo-PosixShellArgument -Value $commandPath)
+        )
+        foreach ($arg in @($Arguments)) {
+            $parts += (ConvertTo-PosixShellArgument -Value $arg)
+        }
+
+        return (Start-NativeProcessWithArgumentList `
+            -FilePath $scriptCommand.Source `
+            -Arguments @("-q", "-e", "-c", ($parts -join " "), "/dev/null"))
+    }
+
+    return (Start-NativeProcessWithArgumentList `
+        -FilePath $commandPath `
+        -Arguments @($Arguments) `
+        -WorkingDirectory $WorkingDirectory)
+}
+
 function Find-AvailableDriveLetter {
     [CmdletBinding()]
     [OutputType([System.String])]
@@ -77,6 +252,11 @@ Export-ModuleMember -Function @(
     "Get-StartupRoot",
     "Get-StartupConfigPath",
     "Import-LauncherConfig",
+    "Get-RegisteredProjectRoots",
+    "Resolve-ProjectPath",
+    "Resolve-CodexLaunchArguments",
+    "ConvertTo-PosixShellArgument",
+    "Invoke-InteractiveNativeCommand",
     "Find-AvailableDriveLetter",
     "Get-LauncherModeName",
     "Get-LauncherShell"

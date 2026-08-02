@@ -40,7 +40,12 @@ function Resolve-CodexWorkingDirectory {
         return (Get-Location).Path
     }
 
-    return Join-Path $Config.projectsDir $ProjectName
+    $resolved = Resolve-ProjectPath -Config $Config -ProjectName $ProjectName
+    if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+        return $resolved
+    }
+
+    return (Join-Path $Config.projectsDir $ProjectName)
 }
 
 function Get-CodexProjectLabel {
@@ -158,14 +163,13 @@ try {
         throw "Codex コマンドが見つかりません: $command"
     }
 
-    $arguments = @($toolConfig.args | ForEach-Object { "$_" })
+    $arguments = @(Resolve-CodexLaunchArguments -Arguments @($toolConfig.args | ForEach-Object { "$_" }))
     Write-LaunchPlan -Command $command -Arguments $arguments -WorkingDirectory $workingDirectory
 
     if ($DryRun) {
         exit 0
     }
 
-    $previous = Get-Location
     $projectLabel = Get-CodexProjectLabel -ProjectName $Project -WorkingDirectory $workingDirectory
     $startAt = Get-Date
     $statePath = Get-CodexStatePath
@@ -175,13 +179,10 @@ try {
     try {
         Update-CodexLaunchState -StatePath $statePath -Phase "Development" -ProjectName $projectLabel
         $null = Publish-CodexLaunchPhaseTransition -StatePath $statePath -ProjectName $projectLabel
-        Set-Location $workingDirectory
-        & $command @arguments
-        $exitCode = $LASTEXITCODE
+        $exitCode = Invoke-InteractiveNativeCommand -FilePath $command -Arguments $arguments -WorkingDirectory $workingDirectory
         $launchSucceeded = ($exitCode -eq 0)
     }
     finally {
-        Set-Location $previous
         Invoke-LogRotation -Config $config
         Stop-SessionLog -Success:$launchSucceeded
     }
