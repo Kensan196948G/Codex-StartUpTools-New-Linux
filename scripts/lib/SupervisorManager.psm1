@@ -279,7 +279,7 @@ function New-SupervisorManifest {
         @($supervisor.humanDecisionRequired)
     }
     else {
-        @("final-choice", "merge", "release")
+        @("final-choice", "high-risk-merge", "release", "publish")
     }
 
     return [pscustomobject]@{
