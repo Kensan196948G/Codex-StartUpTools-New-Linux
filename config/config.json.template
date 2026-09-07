@@ -34,8 +34,9 @@
     "mode": "cto-autonomous",
     "humanDecisionRequired": [
       "final-choice",
-      "merge",
-      "release"
+      "high-risk-merge",
+      "release",
+      "publish"
     ]
   },
   "logging": {

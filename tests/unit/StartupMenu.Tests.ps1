@@ -29,7 +29,7 @@ BeforeAll {
                 enabled                   = $SupervisorEnabled
                 applyToRegisteredProjects = $true
                 mode                      = "cto-autonomous"
-                humanDecisionRequired     = @("final-choice", "merge", "release")
+                humanDecisionRequired     = @("final-choice", "high-risk-merge", "release", "publish")
             }
             recentProjects     = [pscustomobject]@{
                 enabled     = $RecentEnabled

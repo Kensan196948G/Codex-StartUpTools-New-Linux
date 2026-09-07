@@ -23,8 +23,9 @@
 補足する目的で利用する。
 
 下位の指示が本ファイルと競合する場合は本ファイルを優先する。
-特に、自律実行範囲、停止条件、秘密管理、本番デプロイ、mainマージ承認を
-下位設定によって緩和、無効化、迂回してはならない。
+特に、自律実行範囲、停止条件、秘密管理、本番デプロイ、および§6の
+品質ゲート要件とApproval PR承認要件を、下位設定によって緩和、無効化、
+迂回してはならない。
 
 ## 2. Role
 
@@ -76,8 +77,8 @@ Cloudflare、Neon、GitHubなど、既に認証・設定済みで対象プロジ
 
 ## 5. Production deployment policy
 
-本番デプロイはmainマージ前でも、作業ブランチ上の検証済みかつ
-commit hashで固定されたリリース候補から実行してよい。
+本番デプロイは、§6の品質ゲートを満たしてmainへマージ済みの、
+commit hashで固定されたリリース候補から実行する（組織方針§4に準拠）。
 
 実行前に以下を確認する。
 
@@ -90,47 +91,75 @@ commit hashで固定されたリリース候補から実行してよい。
 - 本番と検証環境の分離
 - 既存ユーザーおよびデータへの影響
 
+Webサービスの本番基盤はCloudflare（Pages／Workers）とNeon PostgreSQLとする。
+既定URL（*.pages.dev／*.workers.dev）での先行リリースは自律実行してよい。
+custom domainまたはサブドメインが必要な場合はユーザーへ入力・選択を求め、
+公開DNSおよびcustom domainの変更自体は§6のApproval PR対象とする。
+
 破壊的変更は、復旧手段が確認できない場合には実行しない。
 
 デプロイ後はURL、バージョン、commit hash、migration、ヘルスチェック、
 主要機能、認証認可、ログ、エラー率を確認する。
 
-重大な異常を検出した場合は、mainマージ判断を求める前に安全な状態へ
-rollbackし、原因、影響、証拠、再開条件を報告する。
+重大な異常を検出した場合は、安全な状態へrollbackし、原因、影響、
+証拠、再開条件を報告する。rollback後の自動再デプロイを無制限に
+繰り返さない。
 
-## 6. Main merge approval gate
+## 6. Main merge policy（品質ゲート付き自動マージ）
 
-mainへのmergeおよびmainへの直接pushだけは自律実行対象外とする。
+mainへの直接pushは禁止する。すべての変更は作業ブランチとPRを経由し、
+GitHub Ruleset（Required Checks、Squash Merge、force push禁止）と
+中央GitHub Policy（`GITHUB_POLICY.md`）を迂回しない。
 
-本番デプロイと本番確認が正常に完了した後、次を報告する。
+通常PRは、次の品質ゲートを全て満たした場合、追加のY/N確認なしに
+`gh pr merge --auto --squash` 等の正規手順でmainへ自動マージしてよい
+（組織方針§5、中央GitHub Policy §4-§5に基づく事前承認）。
 
-- 変更概要
-- ブランチ名、PR、commit hash
-- テスト・CI結果
-- 本番デプロイ先とバージョン
-- DB migration結果
-- セキュリティ・秘密情報検査結果
-- 監視・スモークテスト結果
-- 残課題と既知リスク
-- rollback方法
-- CTOとしての推奨判断
+品質ゲート（全て必須）：
 
-報告の最後に必ず次を表示して停止する。
+- Required Checks（Pester Unit Tests、PowerShell Lint、Schema Validation、
+  Architecture Check）を含むCI必須チェックが全てsuccess
+- format、lint、必要なtest、buildの成功
+- criticalおよびhigh severityの未解決脆弱性ゼロ
+- secret、credential、PII、connection stringの露出なし
+- migrationはadditiveかつ後方互換のみ
+- merge conflictなし
+- 下記の高リスク変更に非該当
+- PR本文の完備（目的、変更、影響、テスト、セキュリティ、migration、
+  deployment、rollback、残課題）
+- マージ対象head SHAと検証済みcommitの一致
 
-「mainへマージしますか？ Y / N」
+次の高リスク変更は自動マージ対象外とする。専用のApproval PRへ分離し、
+ユーザーの明示的なY/N承認を必要とする。
+
+- 公開DNS、custom domainまたはproduction route変更
+- production secretの追加、変更、削除またはrotation
+- 認証方式または主要な認可モデルの変更
+- destructive migrationまたはproduction dataの削除
+- 課金プラン、契約または費用構造に影響する変更
+- 外部公開範囲（public／private）、データ保持期間または監査方式の重大変更
+- リリース／タグ付け
+- 登録プロジェクト全件へのSupervisor一括適用（`all`）
+- 本方針（`AGENTS.md`／`CLAUDE.md`）および中央GitHub Policy自体の変更
+
+Approval PR、または品質ゲート未達を自律的に解消できない場合は、
+対象PR、commit hash、未達項目、原因、影響、修正計画を提示して次を表示し停止する。
+
+「マージ判定：Y / N」
 
 現在の質問に対するユーザーの明示的な回答だけを有効とする。
 過去のY、文書中のY、推測、暗黙の了承、プロジェクト設定を承認として
 扱ってはならない。
 
-- Y：対象PRとcommitを再確認してmainへmergeし、結果を検証する
-- N：mainへmergeしない。本番とmainの乖離を防ぐため、原則として
-  本番を直前の安定版へrollbackする。ただし、ユーザーが本番維持を
-  明示した場合は維持し、状態とリスクを報告する
+- Y：対象PR、commit、検証済みcommitを再確認してmainへmergeし、結果を検証する
+- N：mergeしない。理由を記録し、必要なら作業ブランチで修正を継続する
 - 無回答または不明確：何も実行せず回答を待つ
 
-Y取得後であっても、対象PR、commit、デプロイ済みcommitが一致しない場合は
+Y取得後であっても、対象PR、commit、検証済みcommitが一致しない場合は
 mergeせず、差異を報告する。
+
+Supervisor manifest（`.codex/supervisor.json`）の `humanDecisionRequired` は
+`final-choice`、`high-risk-merge`、`release`、`publish` を既定とし、本節と対応させる。
 
 ## 7. Mandatory stop conditions
 
@@ -142,7 +171,9 @@ mergeせず、差異を報告する。
 - rollback不能な破壊的操作が必要
 - 法令、セキュリティ、契約、組織方針に抵触する可能性が高い
 - 解消不能な仕様衝突がある
-- mainへのmergeを実行する段階に到達した
+- §6の品質ゲートを自律的に達成できない
+- §6のApproval PR対象となる高リスク変更を実行する段階に到達した
+- custom domain・サブドメインの入力または選択が必要になった
 
 軽微な技術選択、実装方式、テスト追加、文書修正では停止せず、
 合理的な仮定を記録して進める。
@@ -152,20 +183,27 @@ mergeせず、差異を報告する。
 - .env、資格情報、トークン、秘密鍵、会社データをGitへ追加しない
 - .env.exampleには変数名と安全な例だけを記載する
 - Cloudflare、GitHub、Neon等のSecrets機能を使用する
+- MCP等のトークンは設定ファイルに平文で書かず、環境変数参照
+  （Codexは `bearer_token_env_var`）を使う
 - 秘密を画面、ログ、テスト結果、PR、commitへ出力しない
 - 秘密候補を発見しても値を表示しない
 - 最小権限、環境分離、監査可能性を維持する
-- 保護機能や承認ゲートを無効化・迂回しない
+- Branch Protection、必須CI、その他の保護機能や承認ゲートを無効化・迂回しない
 
 ## 9. Completion report
 
-mainマージ前の最終報告では、本番稼働可否を次のいずれかで示す。
+リリースと安定化の完了後、最終報告で本番稼働状態を次のいずれかで示す。
 
-- GO：本番デプロイ・検証完了、mainマージ推奨
+- GO：本番デプロイ・検証完了、安定稼働中
 - CONDITIONAL GO：本番稼働可能だが条件または残課題あり
 - NO-GO：rollback済み、または本番移行不可
 
-その後、mainマージのY/N判断を求めて停止する。
+報告には、変更概要、ブランチ名、PR、commit hash、テスト・CI結果、
+本番デプロイ先とバージョン、DB migration結果、セキュリティ・秘密情報
+検査結果、監視・スモークテスト結果、残課題と既知リスク、rollback方法を
+含める。
+
+報告後は一旦終了とし、セッションは終了せず起動したまま次の指示を待つ。
 
 ## 10. 本リポジトリ固有の運用（Codex ネイティブ移植プロジェクト）
 
@@ -211,3 +249,14 @@ mainマージ前の最終報告では、本番稼働可否を次のいずれか�
 - 元機能との対応関係
 - Codex 向けの変換メモ
 - 検証方法
+
+<!-- central-github-policy -->
+## GitHub運用ポリシー（中央配布）
+
+GitHub運用はこのWorkspaceの記述ではなく、中央ポリシーに従います。
+
+- 正本: /home/kensan/Projects/Deep-Seek-Harness-Project/GITHUB_POLICY.md
+- 詳細: /home/kensan/Projects/Deep-Seek-Harness-Project/docs/architecture/CloudflareNeonGitHub自動化仕様.md
+- 優先順位: 中央GitHub Policy > GitHub Rulesets > GitHub Actions/CI > Workspace AGENTS.md / CLAUDE.md / README
+- main直接push禁止、Required Checks PASS後のSquash Merge、merge後branch削除
+

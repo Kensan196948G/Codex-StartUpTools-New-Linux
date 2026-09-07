@@ -29,7 +29,7 @@ BeforeAll {
                 enabled                   = $true
                 applyToRegisteredProjects = $true
                 mode                      = "cto-autonomous"
-                humanDecisionRequired     = @("final-choice", "merge", "release")
+                humanDecisionRequired     = @("final-choice", "high-risk-merge", "release", "publish")
             }
         }
     }
@@ -60,7 +60,7 @@ Describe "Test-StartupConfigSchema" {
 
     It "supervisor.humanDecisionRequired が配列でない場合を拒否する" {
         $config = Get-ValidConfig
-        $config.supervisor.humanDecisionRequired = "merge"
+        $config.supervisor.humanDecisionRequired = "high-risk-merge"
         (Test-StartupConfigSchema -Config $config) | Should -Contain "supervisor.humanDecisionRequired は配列である必要があります"
     }
 

@@ -13,8 +13,9 @@
   "sshEnabled": false,
   "humanDecisionRequired": [
     "final-choice",
-    "merge",
-    "release"
+    "high-risk-merge",
+    "release",
+    "publish"
   ],
   "supervisorAppliedAt": "2026-06-07T09:59:42.7487273+09:00"
 }

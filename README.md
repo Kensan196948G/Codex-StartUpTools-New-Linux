@@ -30,7 +30,8 @@
 | ✅ | 最近プロジェクト再起動 | Codex履歴から番号選択で再起動 |
 | 🚫 | SSH接続 | 削除。ローカルプロジェクト起動のみ |
 | 🚫 | Claude / Copilot起動 | 対象外 |
-| 🧑 | 人間判断 | `final-choice`, `merge`, `release`, public化 |
+| 🤖 | 通常PRのmerge | 品質ゲート充足で `gh pr merge --auto --squash`（`AGENTS.md` §6 / `GITHUB_POLICY.md`） |
+| 🧑 | 人間判断 | `final-choice`, `high-risk-merge`（Approval PR）, `release`, `publish` |
 
 ## 🗺️ メニュー構成
 
@@ -97,7 +98,7 @@ Supervisor は、各登録プロジェクトへ `.codex/supervisor.json` を配�
   "agentLoop": ["monitor", "build", "verify", "improve"],
   "codexOnly": true,
   "sshEnabled": false,
-  "humanDecisionRequired": ["final-choice", "merge", "release"]
+  "humanDecisionRequired": ["final-choice", "high-risk-merge", "release", "publish"]
 }
 ```
 
@@ -231,10 +232,11 @@ flowchart TD
     A --> C["build"]
     A --> D["verify"]
     A --> E["improve"]
+    A --> K["通常PR auto-merge<br/>(品質ゲート充足)"]
     F["👤 Human"] --> G["final-choice"]
-    F --> H["merge"]
+    F --> H["high-risk-merge<br/>(Approval PR Y/N)"]
     F --> I["release"]
-    F --> J["public化"]
+    F --> J["publish"]
 ```
 
 | 領域 | 担当 | ルール |
@@ -242,9 +244,12 @@ flowchart TD
 | 実装 | 🤖 Codex / CTO | 既存構造を尊重して自律実行 |
 | テスト | 🤖 Codex / CTO | Pester、ArchitectureCheck、DryRun |
 | 対象選択 | 👤 Human | Supervisor適用先は番号選択 |
-| merge | 👤 Human | 最終判断は人間 |
+| 通常PRのmerge | 🤖 Codex / CTO | Required Checks成功・conflictなし・PR本文完備で `gh pr merge --auto --squash` |
+| 高リスク変更のmerge | 👤 Human | DNS / secret / 認証 / 破壊的migration / 課金 / 公開範囲 / 方針文書 / Supervisor一括適用は Approval PR で「マージ判定：Y / N」 |
 | release/tag | 👤 Human | 最終判断は人間 |
 | public/private | 👤 Human | 公開判断は人間 |
+
+マージ方針の正本は `AGENTS.md` §6（Claude Code は `CLAUDE.md` §6）と中央 `GITHUB_POLICY.md` です。既存の `.codex/supervisor.json` は `humanDecisionRequired` が旧値（`merge`）のままの場合、次回の Supervisor 適用 preview で `update` 差分として表示されます。
 
 ## ⚙️ セットアップ
 
@@ -323,8 +328,10 @@ flowchart TD
     I -->|yes| J["📋 PR番号・URL・Draft・CI集計"]
     I -->|no + -CreateDraft| K["📝 Draft PR作成"]
     I -->|no| L["確認のみ"]
-    J --> M["👤 Human merge decision"]
+    J --> M{"品質ゲート充足?"}
     K --> M
+    M -->|通常PR| N["🤖 gh pr merge --auto --squash"]
+    M -->|高リスク変更| O["👤 Approval PR Y/N"]
 ```
 
 | コマンド | 用途 |
@@ -337,7 +344,7 @@ flowchart TD
 
 1. `main`, `master`, `develop` ではPR作成しない。
 2. 作成するPRはDraft固定。
-3. merge、release、public化は人間判断。
+3. 通常PRのmergeは品質ゲート充足で自動（Squash）。高リスク変更のmerge、release、public化は人間判断。
 4. PRが既にある場合は重複作成しない。
 
 ## 🧾 リリース履歴と次フェーズ
@@ -372,7 +379,7 @@ flowchart TD
 2. 問題なければ3件程度へ追加適用する。
 3. `all` は原則使わない。
 4. `Foreign` と `Invalid` は上書き前に必ず確認する。
-5. merge、release、public化、最終選択は人間判断とする。
+5. 高リスク変更のmerge、release、public化、最終選択は人間判断とする（通常PRは品質ゲート充足で自動マージ）。
 
 ## 📦 Git管理方針
 

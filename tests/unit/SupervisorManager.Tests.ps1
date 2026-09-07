@@ -20,7 +20,7 @@ BeforeAll {
                 enabled                   = $true
                 applyToRegisteredProjects = $true
                 mode                      = "cto-autonomous"
-                humanDecisionRequired     = @("final-choice", "merge", "release")
+                humanDecisionRequired     = @("final-choice", "high-risk-merge", "release", "publish")
             }
         }
     }
@@ -102,7 +102,7 @@ Describe "Set-SupervisorForProject" {
         $manifest.managedBy | Should -Be "Codex-StartUpTools-New-Linux"
         $manifest.codexOnly | Should -BeTrue
         $manifest.sshEnabled | Should -BeFalse
-        $manifest.humanDecisionRequired | Should -Contain "merge"
+        $manifest.humanDecisionRequired | Should -Contain "high-risk-merge"
     }
 
     It "PreviewOnly で既存 manifest との差分を返す" {
