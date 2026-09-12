@@ -39,8 +39,8 @@ function Start-SessionLog {
         Remove-Item $testFile -Force
     }
     catch {
-        Write-Warning "ログディレクトリにアクセスできません: $logDir → `$env:TEMP にフォールバック"
-        $logDir = $env:TEMP
+        Write-Warning "ログディレクトリにアクセスできません: $logDir → OS の一時ディレクトリにフォールバック"
+        $logDir = [System.IO.Path]::GetTempPath()
     }
 
     $logPath = Join-Path $logDir $fileName

@@ -462,10 +462,13 @@ git fetch --all --prune && git rev-list --left-right --count HEAD...origin/main 
 349,763 / 367,363 トークンを消費して `blocked` になった。上限が無いと暴走を止められないため、
 実測最大 + 約 36% の余裕を残した値とした。
 
-**実測による意味の確定**: この設定は「上限」ではなく **既定値** である。
+**既定値の実測**: この設定は **既定値かつ設定可能な上限** である。
 `500000` を設定すると tokenBudget 未指定で作った Goal に 500000 が自動で入る
 （`12345` を設定すれば 12345 が入ることを実測で確認）。
 したがって「予算未設定のまま大量消費する」問題への直接の対策になる。
+2026-09-12 の追加検証で、設定値を超える `tokenBudget` は API に拒否されることを確認した。
+以前の「上限ではない」という結論を訂正する。承認済み増額と既存 Goal 更新の手順は
+`docs/migration/codex-native-goal.md` §3.3 を参照する。
 
 ### 12.3 非対話 Goal 投入の実装（A1）
 
@@ -488,7 +491,7 @@ git fetch --all --prune && git rev-list --left-right --count HEAD...origin/main 
 2. **強制 Kill はスレッドを汚す。** `Process.Kill()` はスレッドに `active writer` を残し、
    後続セッションが同じスレッドを開けなくなる。→ stdin を閉じて EOF を送り正常終了を待つ
    （3 秒で終わらなければ Kill）。
-3. **`max_goal_token_budget` は既定値**（§12.2）。
+3. **`max_goal_token_budget` は既定値かつ設定可能な上限**（§12.2、追加検証で訂正）。
 
 ### 12.5 検証結果
 

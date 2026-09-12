@@ -67,6 +67,43 @@ Describe "Get-RegisteredProjectRoots" {
 }
 
 Describe "Resolve-ProjectPath" {
+    It "明示された絶対パスを登録ルートと結合せず返す" {
+        $projectPath = Join-Path $TestDrive "explicit [project]"
+        New-Item -ItemType Directory -Path $projectPath -Force | Out-Null
+        $config = [pscustomobject]@{ projectsDir = (Join-Path $TestDrive "elsewhere") }
+        Resolve-ProjectPath -Config $config -ProjectName $projectPath | Should -BeExactly $projectPath
+    }
+
+    It "存在しない絶対パスまたはファイルを拒否する" {
+        $config = [pscustomobject]@{ projectsDir = $TestDrive }
+        $filePath = Join-Path $TestDrive "not-a-directory"
+        Set-Content -LiteralPath $filePath -Value "fixture"
+        { Resolve-ProjectPath -Config $config -ProjectName $filePath } | Should -Throw "*ディレクトリが見つかりません*"
+        { Resolve-ProjectPath -Config $config -ProjectName (Join-Path $TestDrive "missing") } | Should -Throw "*ディレクトリが見つかりません*"
+    }
+
+    It "複数の登録ルートに同名プロジェクトがある場合は拒否する" {
+        $roots = @((Join-Path $TestDrive "internal"), (Join-Path $TestDrive "external"))
+        foreach ($root in $roots) { New-Item -ItemType Directory -Path (Join-Path $root "shared") -Force | Out-Null }
+        $config = [pscustomobject]@{ projectsDir = $TestDrive; registeredProjects = [pscustomobject]@{ roots = $roots } }
+        { Resolve-ProjectPath -Config $config -ProjectName "shared" } | Should -Throw "*プロジェクト名が曖昧*"
+    }
+
+    It "同じ登録ルートの重複は曖昧さとして扱わない" {
+        $root = Join-Path $TestDrive "repeated"
+        $projectPath = Join-Path $root "unique"
+        New-Item -ItemType Directory -Path $projectPath -Force | Out-Null
+        $config = [pscustomobject]@{ registeredProjects = [pscustomobject]@{ roots = @($root, "$root/.") } }
+        Resolve-ProjectPath -Config $config -ProjectName "unique" | Should -BeExactly $projectPath
+    }
+
+    It "Linux の大文字小文字が異なる登録ルートを別パスとして扱う" {
+        $roots = @((Join-Path $TestDrive "CaseRoot"), (Join-Path $TestDrive "caseroot"))
+        foreach ($root in $roots) { New-Item -ItemType Directory -Path (Join-Path $root "same") -Force | Out-Null }
+        $config = [pscustomobject]@{ registeredProjects = [pscustomobject]@{ roots = $roots } }
+        { Resolve-ProjectPath -Config $config -ProjectName "same" } | Should -Throw "*プロジェクト名が曖昧*"
+    }
+
     It "登録ルート配下のプロジェクトを解決する" {
         $internalRoot = Join-Path $TestDrive "Mirai-Project"
         $externalRoot = Join-Path $TestDrive "Mirai-DX-Project"

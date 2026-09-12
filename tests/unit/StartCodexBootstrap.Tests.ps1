@@ -21,7 +21,7 @@ BeforeAll {
             }
             logging            = [ordered]@{
                 enabled         = $true
-                logDir          = (Join-Path $TestDrive "logs")
+                logDir          = (Join-Path $script:CaseRoot "logs")
                 logPrefix       = "test-startup"
                 successKeepDays = 30
                 failureKeepDays = 90
@@ -51,8 +51,10 @@ BeforeAll {
 
 Describe "Start-CodexBootstrap" {
     BeforeEach {
-        $script:ConfigPath = Join-Path $TestDrive "config.json"
-        $script:StatePath = Join-Path $TestDrive "state.json"
+        $script:CaseRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:CaseRoot | Out-Null
+        $script:ConfigPath = Join-Path $script:CaseRoot "config.json"
+        $script:StatePath = Join-Path $script:CaseRoot "state.json"
         New-TestConfigFile -Path $script:ConfigPath
     }
 
@@ -65,9 +67,60 @@ Describe "Start-CodexBootstrap" {
 
         $exitCode | Should -Be 0
         (Test-Path $script:StatePath) | Should -BeFalse
+        (Test-Path (Join-Path $script:CaseRoot "logs")) | Should -BeFalse
         ($output -join "`n") | Should -Match "Bootstrap Summary"
         ($output -join "`n") | Should -Match "Preflight Checks"
         ($output -join "`n") | Should -Match "Readiness: READY"
+    }
+
+    It "初回 DryRun は template を検証し config と state と logs を作成しない" {
+        $templatePath = Join-Path $script:CaseRoot "config.json.template"
+        Move-Item $script:ConfigPath $templatePath
+        $templateHash = (Get-FileHash $templatePath).Hash
+        $env:AI_STARTUP_CONFIG_PATH = $script:ConfigPath
+        $env:AI_STARTUP_STATE_PATH = $script:StatePath
+
+        $output = & pwsh -NoProfile -File $script:BootstrapScript -DryRun -NonInteractive 2>&1
+
+        $LASTEXITCODE | Should -Be 0
+        ($output -join "`n") | Should -Match "Readiness: READY"
+        (Test-Path $script:ConfigPath) | Should -BeFalse
+        (Test-Path $script:StatePath) | Should -BeFalse
+        (Test-Path (Join-Path $script:CaseRoot "logs")) | Should -BeFalse
+        (Get-FileHash $templatePath).Hash | Should -Be $templateHash
+    }
+
+    It "DryRun は既存 config と state と期限切れログを変更しない" {
+        Copy-Item (Join-Path $script:RepoRoot "state.json.example") $script:StatePath
+        $logDir = Join-Path $script:CaseRoot "logs"
+        New-Item -ItemType Directory $logDir -Force | Out-Null
+        $logPath = Join-Path $logDir "test-startup-old-SUCCESS.log"
+        Set-Content $logPath "preserve"
+        (Get-Item $logPath).LastWriteTime = (Get-Date).AddDays(-100)
+        $before = @(Get-ChildItem $script:CaseRoot -File -Recurse | Sort-Object FullName | Get-FileHash | Select-Object Path, Hash | ConvertTo-Json)
+        $env:AI_STARTUP_CONFIG_PATH = $script:ConfigPath
+        $env:AI_STARTUP_STATE_PATH = $script:StatePath
+
+        & pwsh -NoProfile -File $script:BootstrapScript -DryRun -NonInteractive | Out-Null
+
+        $LASTEXITCODE | Should -Be 0
+        $after = @(Get-ChildItem $script:CaseRoot -File -Recurse | Sort-Object FullName | Get-FileHash | Select-Object Path, Hash | ConvertTo-Json)
+        $after | Should -Be $before
+    }
+
+    It "初回 DryRun は不正 template を拒否しファイルを作成しない" {
+        Move-Item $script:ConfigPath (Join-Path $script:CaseRoot "config.json.template")
+        Set-Content (Join-Path $script:CaseRoot "config.json.template") '{}'
+        $env:AI_STARTUP_CONFIG_PATH = $script:ConfigPath
+        $env:AI_STARTUP_STATE_PATH = $script:StatePath
+
+        $output = & pwsh -NoProfile -File $script:BootstrapScript -DryRun -NonInteractive 2>&1
+
+        $LASTEXITCODE | Should -Be 1
+        ($output -join "`n") | Should -Match "必須フィールド"
+        (Test-Path $script:ConfigPath) | Should -BeFalse
+        (Test-Path $script:StatePath) | Should -BeFalse
+        (Test-Path (Join-Path $script:CaseRoot "logs")) | Should -BeFalse
     }
 
     It "通常実行では state.json を初期化する" {
@@ -85,7 +138,7 @@ Describe "Start-CodexBootstrap" {
         $state.execution.start_time | Should -Not -BeNullOrEmpty
         @($state.message_bus."phase.transition").Count | Should -Be 1
         $state.message_bus."phase.transition"[0].payload.to | Should -Be "Monitor"
-        @(Get-ChildItem -Path (Join-Path $TestDrive "logs") -Filter "test-startup-*-SUCCESS.log" -ErrorAction SilentlyContinue).Count | Should -BeGreaterThan 0
+        @(Get-ChildItem -Path (Join-Path $script:CaseRoot "logs") -Filter "test-startup-*-SUCCESS.log" -ErrorAction SilentlyContinue).Count | Should -BeGreaterThan 0
         (& pwsh -NoProfile -File $script:BootstrapScript -NonInteractive 2>&1 | Out-String) | Should -Match "Readiness: READY"
     }
 

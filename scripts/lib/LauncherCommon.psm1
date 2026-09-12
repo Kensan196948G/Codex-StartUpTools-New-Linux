@@ -74,12 +74,26 @@ function Resolve-ProjectPath {
         return ""
     }
 
+    if ([System.IO.Path]::IsPathFullyQualified($ProjectName)) {
+        if (-not (Test-Path -LiteralPath $ProjectName -PathType Container)) {
+            throw "プロジェクトディレクトリが見つかりません: $ProjectName"
+        }
+        return (Resolve-Path -LiteralPath $ProjectName).ProviderPath
+    }
+
+    $identities = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $matchingPaths = [System.Collections.Generic.List[string]]::new()
     foreach ($root in @(Get-RegisteredProjectRoots -Config $Config)) {
         $candidate = Join-Path $root $ProjectName
-        if (Test-Path $candidate) {
-            return $candidate
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            $identity = [System.IO.Path]::TrimEndingDirectorySeparator((Resolve-Path -LiteralPath $candidate).ProviderPath)
+            if ($identities.Add($identity)) { $matchingPaths.Add($candidate) }
         }
     }
+    if ($matchingPaths.Count -gt 1) {
+        throw "プロジェクト名が曖昧です。絶対パスで指定してください: $ProjectName ($($matchingPaths -join ', '))"
+    }
+    if ($matchingPaths.Count -eq 1) { return $matchingPaths[0] }
 
     $projectsDir = $Config.PSObject.Properties["projectsDir"]?.Value
     if (-not [string]::IsNullOrWhiteSpace($projectsDir)) {

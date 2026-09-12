@@ -459,7 +459,9 @@ function Set-SupervisorForRegisteredProjects {
 
         [switch]$PreviewOnly,
 
-        [string[]]$ProjectNames = @()
+        [string[]]$ProjectNames = @(),
+
+        [string[]]$ProjectPaths = @()
     )
 
     $supervisor = $Config.PSObject.Properties["supervisor"]?.Value
@@ -468,14 +470,37 @@ function Set-SupervisorForRegisteredProjects {
     }
 
     $projects = @(Get-RegisteredProjectCandidate -Config $Config)
-    if (@($ProjectNames).Count -gt 0) {
-        $nameSet = @{}
-        foreach ($name in $ProjectNames) {
-            if (-not [string]::IsNullOrWhiteSpace($name)) {
-                $nameSet[$name] = $true
-            }
+    if ($PSBoundParameters.ContainsKey('ProjectPaths')) {
+        if ($PSBoundParameters.ContainsKey('ProjectNames')) {
+            throw "ProjectPaths と ProjectNames は同時に指定できません。"
         }
-        $projects = @($projects | Where-Object { $nameSet.ContainsKey($_.name) })
+        $selected = [System.Collections.Generic.List[object]]::new()
+        $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        foreach ($path in $ProjectPaths) {
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                throw "プロジェクトパスが空です。"
+            }
+            $identity = [System.IO.Path]::GetFullPath($path).TrimEnd('/')
+            $matchingProjects = @($projects | Where-Object {
+                [System.IO.Path]::GetFullPath($_.path).TrimEnd('/') -ceq $identity
+            })
+            if ($matchingProjects.Count -ne 1) {
+                throw "登録候補を一意に特定できません: $path"
+            }
+            if ($seen.Add($identity)) { $selected.Add($matchingProjects[0]) }
+        }
+        $projects = @($selected)
+    }
+    elseif ($PSBoundParameters.ContainsKey('ProjectNames')) {
+        $selected = [System.Collections.Generic.List[object]]::new()
+        foreach ($name in $ProjectNames) {
+            $matchingProjects = @($projects | Where-Object { $_.name -ceq $name })
+            if ([string]::IsNullOrWhiteSpace($name) -or $matchingProjects.Count -ne 1) {
+                throw "プロジェクト名を一意に特定できません。ProjectPaths を指定してください: $name"
+            }
+            if ($matchingProjects[0] -notin $selected) { $selected.Add($matchingProjects[0]) }
+        }
+        $projects = @($selected)
     }
 
     return @($projects | ForEach-Object {

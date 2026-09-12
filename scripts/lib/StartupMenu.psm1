@@ -514,6 +514,29 @@ function Invoke-BootstrapAction {
     Wait-MenuInput
 }
 
+function Resolve-StartupProjectIdentity {
+    param([object]$Config, [string]$Project, [string]$BaseDir = '')
+
+    if ([System.IO.Path]::IsPathFullyQualified($Project)) {
+        return [System.IO.Path]::GetFullPath($Project)
+    }
+    $roots = if ($BaseDir) { @($BaseDir) } else { @(Get-StartupRegisteredProjectRoot -Config $Config) }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $matchingProjects = @($roots | ForEach-Object {
+        $candidate = Join-Path $_ $Project
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            $identity = [System.IO.Path]::GetFullPath($candidate)
+            if ($seen.Add($identity)) { $identity }
+        }
+    })
+    if ($matchingProjects.Count -gt 1) {
+        throw "同名プロジェクトが複数あります。絶対パスまたは番号で選択してください: $Project"
+    }
+    if ($matchingProjects.Count -eq 1) { return $matchingProjects[0] }
+    if (-not $BaseDir) { $BaseDir = Get-StartupProjectsDir -Config $Config }
+    return Join-Path $BaseDir $Project
+}
+
 function Get-RecentRestartCandidate {
     [CmdletBinding()]
     [OutputType([System.Object[]])]
@@ -541,8 +564,7 @@ function Get-RecentRestartCandidate {
         $entries = @($entries | Where-Object { $_.mode -eq $Mode })
     }
 
-    $registeredRoots = @(Get-StartupRegisteredProjectRoot -Config $Config)
-    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     $candidates = [System.Collections.Generic.List[object]]::new()
 
     foreach ($entry in $entries) {
@@ -554,16 +576,12 @@ function Get-RecentRestartCandidate {
             continue
         }
 
-        $projectPath = ""
-        foreach ($root in $registeredRoots) {
-            $candidate = Join-Path $root $projectName
-            if (Test-Path $candidate) {
-                $projectPath = $candidate
-                break
-            }
+        try {
+            $projectPath = Resolve-StartupProjectIdentity -Config $Config -Project $projectName
         }
-        if ([string]::IsNullOrWhiteSpace($projectPath)) {
-            $projectPath = Join-Path (Get-StartupProjectsDir -Config $Config) $projectName
+        catch {
+            Write-Warning $_.Exception.Message
+            continue
         }
         $candidates.Add([pscustomobject]@{
             project   = $projectName
@@ -573,7 +591,7 @@ function Get-RecentRestartCandidate {
             timestamp = $entry.timestamp
             result    = $entry.result
             elapsedMs = $entry.elapsedMs
-            exists    = Test-Path $projectPath
+            exists    = Test-Path -LiteralPath $projectPath -PathType Container
         })
 
         if ($candidates.Count -ge $MaxCount) {
@@ -672,7 +690,7 @@ function Invoke-RecentProjectsAction {
                 Write-Host ("  [WARN] プロジェクトディレクトリが見つかりません: {0}" -f $selected.path) -ForegroundColor Yellow
             }
             else {
-                Invoke-CodexRestartForRecentProject -ProjectName $selected.project -ProjectRoot $ProjectRoot
+                Invoke-CodexRestartForRecentProject -ProjectName $selected.path -ProjectRoot $ProjectRoot
             }
         }
     }
@@ -1051,7 +1069,7 @@ function Read-SupervisorProjectSelection {
     }
 
     if ($choice.Equals("all", [System.StringComparison]::OrdinalIgnoreCase)) {
-        return @($Candidates | ForEach-Object { $_.name })
+        return @($Candidates | ForEach-Object { $_.path })
     }
 
     $selected = [System.Collections.Generic.List[string]]::new()
@@ -1066,9 +1084,9 @@ function Read-SupervisorProjectSelection {
             continue
         }
 
-        $name = $Candidates[$index - 1].name
-        if ($name -notin $selected) {
-            $selected.Add($name)
+        $path = $Candidates[$index - 1].path
+        if ($path -cnotin $selected) {
+            $selected.Add($path)
         }
     }
 
@@ -1101,15 +1119,15 @@ function Invoke-SupervisorAction {
         Write-Host "    入力例: 1,3,5 / all / 0" -ForegroundColor Yellow
 
         $selectionText = Read-Host "  適用する番号をカンマ区切りで入力してください"
-        $selectedNames = @(Read-SupervisorProjectSelection -Candidates $candidates -InputText $selectionText)
-        if ($selectedNames.Count -eq 0) {
+        $selectedPaths = @(Read-SupervisorProjectSelection -Candidates $candidates -InputText $selectionText)
+        if ($selectedPaths.Count -eq 0) {
             Write-Host "  [INFO] Supervisor 適用をキャンセルしました。" -ForegroundColor Yellow
             Write-Host ""
             Wait-MenuInput
             return
         }
 
-        $preview = @(Set-SupervisorForRegisteredProjects -Config $Config -ProjectNames $selectedNames -PreviewOnly)
+        $preview = @(Set-SupervisorForRegisteredProjects -Config $Config -ProjectPaths $selectedPaths -PreviewOnly)
         Write-Host ""
         Write-Host "  適用予定:" -ForegroundColor Cyan
         $preview | ForEach-Object {
@@ -1145,7 +1163,7 @@ function Invoke-SupervisorAction {
             return
         }
 
-        $results = @(Set-SupervisorForRegisteredProjects -Config $Config -ProjectNames $selectedNames)
+        $results = @(Set-SupervisorForRegisteredProjects -Config $Config -ProjectPaths $selectedPaths)
         Write-Host ("  [OK] Supervisor 適用完了: {0} project(s)" -f $results.Count) -ForegroundColor Green
     }
     catch {
@@ -1271,7 +1289,7 @@ function Show-ProjectSelector {
     if ($RecentProjects.Count -gt 0) {
         Write-Host "  ★ 最近使ったプロジェクト:" -ForegroundColor Yellow
         foreach ($p in $RecentProjects) {
-            if ($p -notin $listed) {
+            if ($p -cnotin $listed) {
                 $num = $listed.Count + 1
                 $listed.Add($p)
                 $indexMap[$num] = $p
@@ -1282,7 +1300,7 @@ function Show-ProjectSelector {
     }
 
     # 全プロジェクト一覧（重複除外）
-    $remaining = @($AllProjects | Where-Object { $_ -notin $listed })
+    $remaining = @($AllProjects | Where-Object { $_ -cnotin $listed })
     if ($remaining.Count -gt 0) {
         if ($RecentProjects.Count -gt 0) {
             Write-Host "  ── その他のプロジェクト ──" -ForegroundColor Cyan
@@ -1343,13 +1361,29 @@ function Select-ProjectInteractive {
 
     $localBase = if (-not [string]::IsNullOrWhiteSpace($BaseDir)) { $BaseDir } else { Get-StartupProjectsDir -Config $Config }
 
-    $allProjects    = @(Get-LocalProjectList -BaseDir $localBase)
-    $recentProjects = @(Get-RecentProjectNames -HistoryPath $historyPath -Tool $Tool -Mode 'local')
+    $scoped = -not [string]::IsNullOrWhiteSpace($BaseDir)
+    $roots = if ($scoped) { @($localBase) } else { @(Get-StartupRegisteredProjectRoot -Config $Config) }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $allProjects = @($roots | ForEach-Object {
+        $root = $_
+        Get-LocalProjectList -BaseDir $root | ForEach-Object {
+            $identity = [System.IO.Path]::GetFullPath((Join-Path $root $_))
+            if ($seen.Add($identity)) { $identity }
+        }
+    })
+    $recentProjects = @(Get-RecentRestartCandidate -Config $Config -HistoryPath $historyPath -Tool $Tool -Mode 'local' |
+        Where-Object {
+            $_.exists -and (-not $scoped -or
+                [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($_.path)) -ceq
+                [System.IO.Path]::GetFullPath($localBase).TrimEnd('/'))
+        } | ForEach-Object { $_.path })
 
-    return Show-ProjectSelector `
+    $selection = Show-ProjectSelector `
         -RecentProjects $recentProjects `
         -AllProjects    $allProjects `
         -BaseLabel      $localBase
+    if ([string]::IsNullOrWhiteSpace($selection)) { return '' }
+    return Resolve-StartupProjectIdentity -Config $Config -Project $selection -BaseDir $BaseDir
 }
 
 function Invoke-LaunchAction {
@@ -1391,21 +1425,10 @@ function Invoke-LaunchAction {
     $workDir = if ([string]::IsNullOrWhiteSpace($project)) {
         $localBase
     } else {
-        $resolved = ""
-        foreach ($root in @(Get-StartupRegisteredProjectRoot -Config $Config)) {
-            $candidate = Join-Path $root $project
-            if (Test-Path $candidate) {
-                $resolved = $candidate
-                break
-            }
-        }
-        if ([string]::IsNullOrWhiteSpace($resolved)) {
-            $resolved = Join-Path $localBase $project
-        }
-        $resolved
+        Resolve-StartupProjectIdentity -Config $Config -Project $project -BaseDir $localBase
     }
 
-    if (-not (Test-Path $workDir)) {
+    if (-not (Test-Path -LiteralPath $workDir -PathType Container)) {
         Write-Host ("  [ERROR] ディレクトリが見つかりません: {0}" -f $workDir) -ForegroundColor Red
         Write-Host ""
         Wait-MenuInput
@@ -1430,7 +1453,7 @@ function Invoke-LaunchAction {
         if ($historyPath -and $Config.recentProjects.enabled) {
             $historyPath = [System.Environment]::ExpandEnvironmentVariables($historyPath)
             $result = if ($exitCode -eq 0) { 'success' } else { 'failure' }
-            $projName = if ($project) { $project } else { 'default' }
+            $projName = [System.IO.Path]::GetFullPath($workDir)
             Update-RecentProject -ProjectName $projName -Tool $Tool -Mode $Mode `
                 -Result $result -ElapsedMs 0 `
                 -HistoryPath $historyPath -MaxHistory $Config.recentProjects.maxHistory `

@@ -22,42 +22,154 @@ function Test-McpCommandExists {
     return [bool](Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
+function Test-McpProcessGroupOwnership {
+    param([System.Diagnostics.Process]$Process)
+
+    if ($Process.HasExited -or $Process.Id -le 1) { return $false }
+    $stat = Get-Content -LiteralPath "/proc/$($Process.Id)/stat" -Raw -ErrorAction Stop
+    $match = [regex]::Match($stat, '^\d+ \(.*\) \S+ \d+ (?<group>\d+) (?<session>\d+) ')
+    return ($match.Success -and $match.Groups['group'].Value -eq "$($Process.Id)" -and $match.Groups['session'].Value -eq "$($Process.Id)")
+}
+
 function Invoke-McpProcessWithTimeout {
     param(
         [string]$Command,
         [string[]]$Arguments = @(),
+        [ValidateRange(1, 2147483)]
         [int]$TimeoutSec = 5
     )
 
-    $stdoutPath = Join-Path $env:TEMP ("codex-startup-mcp-" + [guid]::NewGuid().ToString() + ".out")
-    $stderrPath = Join-Path $env:TEMP ("codex-startup-mcp-" + [guid]::NewGuid().ToString() + ".err")
     $process = $null
+    $started = $false
+    $groupOwned = $false
+    $maxOutputChars = 1048576
 
     try {
         $resolved = Get-Command $Command -ErrorAction Stop
         $filePath = if ($resolved.Source) { $resolved.Source } else { $Command }
-        $process = Start-Process -FilePath $filePath -ArgumentList (ConvertTo-McpProcessArgumentString -Arguments $Arguments) -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-
-        if ($process.WaitForExit($TimeoutSec * 1000)) {
-            $stdout = if (Test-Path $stdoutPath) { Get-Content -Path $stdoutPath -Raw -Encoding UTF8 } else { "" }
-            $stderr = if (Test-Path $stderrPath) { Get-Content -Path $stderrPath -Raw -Encoding UTF8 } else { "" }
+        $sessionCommand = Get-Command setsid -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $shellCommand = Get-Command sh -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $killCommand = Get-Command kill -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        # leader を回収まで保持し、終了した検査の子も同じグループで回収する。
+        $wrapper = @'
+printf '%s\n' "$$"
+IFS= read -r request || exit 125
+[ "$request" = start ] || exit 125
+"$@" &
+child=$!
+wait "$child"
+status=$?
+exec 1>&- 2>&-
+IFS= read -r request
+exit "$status"
+'@
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo.FileName = $sessionCommand.Source
+        $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.CreateNoWindow = $true
+        $process.StartInfo.RedirectStandardOutput = $true
+        $process.StartInfo.RedirectStandardError = $true
+        $process.StartInfo.RedirectStandardInput = $true
+        $process.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $process.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+        foreach ($argument in @('--', $shellCommand.Source, '-c', $wrapper, 'mcp-health', $filePath) + $Arguments) {
+            $process.StartInfo.ArgumentList.Add($argument)
+        }
+        $timer = [System.Diagnostics.Stopwatch]::StartNew()
+        [void]$process.Start()
+        $started = $true
+        $stderrBuffer = [char[]]::new(4096)
+        $stderrTask = $process.StandardError.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
+        $remainingMilliseconds = {
+            [int][math]::Min([int]::MaxValue, [math]::Max(0, ($TimeoutSec * 1000.0) - $timer.Elapsed.TotalMilliseconds))
+        }
+        # 初期応答も固定長で読み、不正な改行なし出力を保持し続けない。
+        $handshakeBuffer = [char[]]::new(1)
+        $handshakeText = [System.Text.StringBuilder]::new()
+        $handshakeComplete = $false
+        while ($handshakeText.Length -lt 32 -and (& $remainingMilliseconds) -gt 0) {
+            $handshake = $process.StandardOutput.ReadAsync($handshakeBuffer, 0, 1)
+            if (-not $handshake.Wait((& $remainingMilliseconds))) { break }
+            if ($handshake.Result -eq 0) { throw 'MCP health process group ownership could not be verified' }
+            if ($handshakeBuffer[0] -eq "`n") { $handshakeComplete = $true; break }
+            [void]$handshakeText.Append($handshakeBuffer[0])
+        }
+        if ($handshakeText.Length -ge 32) { throw 'MCP health process group ownership could not be verified' }
+        $outputCompleted = $false
+        $exited = $false
+        if ($handshakeComplete) {
+            if ($handshakeText.ToString() -ne "$($process.Id)" -or -not (Test-McpProcessGroupOwnership -Process $process)) {
+                throw 'MCP health process group ownership could not be verified'
+            }
+            $groupOwned = $true
+            $stdoutBuffer = [char[]]::new(4096)
+            $streams = @(
+                @{ Reader = $process.StandardOutput; Buffer = $stdoutBuffer; Text = [System.Text.StringBuilder]::new(); Task = $process.StandardOutput.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length) },
+                @{ Reader = $process.StandardError; Buffer = $stderrBuffer; Text = [System.Text.StringBuilder]::new(); Task = $stderrTask }
+            )
+            $process.StandardInput.WriteLine('start')
+            $process.StandardInput.Flush()
+            # 各ストリームの保留読み取りは1つだけ。合計上限を超えるチャンクは保存しない。
+            $totalChars = 0
+            while ((& $remainingMilliseconds) -gt 0) {
+                $pending = @($streams | Where-Object { $null -ne $_.Task })
+                if ($pending.Count -eq 0) { $outputCompleted = $true; break }
+                $tasks = [System.Threading.Tasks.Task[]]@($pending | ForEach-Object { $_.Task })
+                if ([System.Threading.Tasks.Task]::WaitAny($tasks, (& $remainingMilliseconds)) -lt 0) { break }
+                foreach ($stream in $pending) {
+                    if (-not $stream.Task.IsCompleted) { continue }
+                    $count = $stream.Task.GetAwaiter().GetResult()
+                    if ($count -eq 0) { $stream.Task = $null; continue }
+                    $totalChars += $count
+                    if ($totalChars -gt $maxOutputChars) {
+                        return [pscustomobject]@{
+                            TimedOut = $false
+                            OutputLimitExceeded = $true
+                            ExitCode = -1
+                            Output = "health command output exceeded ${maxOutputChars} characters"
+                        }
+                    }
+                    [void]$stream.Text.Append($stream.Buffer, 0, $count)
+                    $stream.Task = $stream.Reader.ReadAsync($stream.Buffer, 0, $stream.Buffer.Length)
+                }
+            }
+            if ($outputCompleted) {
+                $process.StandardInput.WriteLine('finish')
+                $process.StandardInput.Close()
+                $exited = $process.WaitForExit((& $remainingMilliseconds))
+            }
+        }
+        if ($exited -and $outputCompleted) {
             return [pscustomobject]@{
                 TimedOut = $false
+                OutputLimitExceeded = $false
                 ExitCode = $process.ExitCode
-                Output   = ($stdout + $stderr).Trim()
+                Output   = ($streams[0].Text.ToString() + $streams[1].Text.ToString()).Trim()
             }
         }
 
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         return [pscustomobject]@{
             TimedOut = $true
+            OutputLimitExceeded = $false
             ExitCode = -1
             Output   = "health command timed out after ${TimeoutSec}s"
         }
     }
     finally {
-        foreach ($path in @($stdoutPath, $stderrPath)) {
-            Remove-Item $path -Force -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            try {
+                if ($started -and -not $process.HasExited) {
+                    if ($groupOwned -and (Test-McpProcessGroupOwnership -Process $process)) {
+                        & $killCommand.Source -KILL -- "-$($process.Id)" 2>$null
+                        if ($LASTEXITCODE -ne 0) { throw 'MCP health process group cleanup failed' }
+                    }
+                    else {
+                        $process.Kill($true)
+                    }
+                    [void]$process.WaitForExit(5000)
+                }
+            }
+            finally { $process.Dispose() }
         }
     }
 }

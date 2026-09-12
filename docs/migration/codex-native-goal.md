@@ -68,13 +68,26 @@
 → 対策: `Close-CodexGoalSession` は **stdin を閉じて EOF を送り正常終了**を待つ。
 3 秒で終わらない場合のみ Kill する。
 
-### 3.3 `max_goal_token_budget` は「上限」ではなく「既定値」
+### 3.3 `max_goal_token_budget` は既定値かつ設定可能な上限
 
 `goals.max_goal_token_budget = 500000` を設定すると、
 **tokenBudget を指定せずに作った Goal に 500000 が自動で入る**（実測。
 `12345` を設定すれば 12345 が入る）。
 
 → これは「予算未設定のまま 35 万トークン消費して blocked になる」問題への直接の対策になる。
+
+2026-09-12 の追加検証では、設定が 500000 のまま `tokenBudget: 1000000` を
+`thread/goal/set` に送ると `exceeds the maximum allowed goal token budget of 500000` で拒否された。
+既定値の検証だけでは上限制約を否定できず、以前の「上限ではない」という説明は誤りだった。
+ユーザーが増額を承認した場合は、更新用 app-server に
+`codex -c goals.max_goal_token_budget=1000000 app-server` のように明示する。
+これは起動時だけの設定であり、リポジトリの既定値は変更しない。
+
+既に永続化された今回の Goal は、`thread/resume` なしの `thread/goal/get` / `set` で更新できた。
+`objective` を省略して `tokenBudget` と `status: active` を指定し、目的と消費履歴の維持を読み戻して確認した。
+実行中スレッドに `thread/resume` すると `already has an active writer` となるため、
+予算変更のためにロックを削除したり既存プロセスを強制終了したりしない。
+新規スレッドの作成と設定には引き続き同一接続を使う。
 
 ### 3.4 `codex exec` に `--goal` は無い
 
@@ -133,6 +146,12 @@ app-server 単体では Goal は回らない（TUI 側の idle 継続に依存�
 というループを **同一 app-server セッションを保持したまま** 回す。
 終端 status（`complete` / `blocked` / `usageLimited` / `budgetLimited`）または
 `MaxTurns` / `MaxMinutes` / turn タイムアウトで停止する。
+
+`MaxMinutes` はセッション準備開始から計測し、各 RPC とターン待機には残時間を
+上限として渡す。期限到達後は追加の状態取得 RPC を送らず、最後に確認した Goal を返す。
+タイムアウト指定は秒単位で切り上げるため最大約 1 秒の差があり、終了処理の待機時間は別途必要になる。
+stdout の読み取りは無音時にも未完了 Task を保持し、次の待機で再利用する。
+stderr は非同期で破棄し、パイプの詰まりを防ぐ。内容は保存・表示しない。
 
 継続プロンプトは Codex ネイティブの継続指示と同じ規律（目的を縮小しない / 証拠で判断 /
 progress と verified wait の区別 / 3 ターン連続の同一ブロッカーで blocked）を外部から与える。

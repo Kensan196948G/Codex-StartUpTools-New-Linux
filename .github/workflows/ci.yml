@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, 'feature/**', 'codex/**']
+    branches: [main, develop, 'feature/**', 'codex/**', 'auto/**']
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
@@ -28,6 +28,7 @@ jobs:
       - name: Run Unit Tests
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           Import-Module Pester -MinimumVersion 5.0 -Force
           $config = New-PesterConfiguration
           $config.Run.Path = "tests/unit"
@@ -37,8 +38,8 @@ jobs:
           $config.TestResult.OutputPath = "testResults.xml"
           $config.TestResult.OutputFormat = "NUnitXml"
           $result = Invoke-Pester -Configuration $config
-          if ($result.FailedCount -gt 0) {
-            Write-Error "Tests failed: $($result.FailedCount) failure(s)"
+          if ($null -eq $result -or $result.Result -ne 'Passed' -or $result.TotalCount -eq 0 -or $result.PassedCount -eq 0) {
+            Write-Error "Pester did not complete successfully with passing tests"
             exit 1
           }
 
@@ -66,12 +67,18 @@ jobs:
       - name: Run PSScriptAnalyzer
         shell: pwsh
         run: |
-          $results = Invoke-ScriptAnalyzer -Path scripts/ -Recurse -Severity Error,Warning
+          $ErrorActionPreference = 'Stop'
+          Import-Module PSScriptAnalyzer -Force
+          $results = @(Invoke-ScriptAnalyzer -Path scripts/ -Recurse -Severity Error,Warning)
           if ($results.Count -gt 0) {
             $results | Format-Table -AutoSize
             Write-Warning "$($results.Count) PSScriptAnalyzer finding(s)"
           } else {
             Write-Host "PSScriptAnalyzer: No issues found" -ForegroundColor Green
+          }
+          $errors = @($results | Where-Object { $_.Severity -eq 'Error' })
+          if ($errors.Count -gt 0) {
+            throw "PSScriptAnalyzer failed: $($errors.Count) error(s)"
           }
 
   schema-validation:
@@ -85,15 +92,24 @@ jobs:
       - name: Validate state.json.example
         shell: pwsh
         run: |
-          $example = Get-Content state.json.example -Raw | ConvertFrom-Json
-          $schema  = Get-Content state.schema.json  -Raw | ConvertFrom-Json
-          Write-Host "state.json.example is valid JSON" -ForegroundColor Green
+          $ErrorActionPreference = 'Stop'
+          $example = Get-Content state.json.example -Raw
+          if (-not (Test-Json -Json $example -SchemaFile state.schema.json -ErrorAction Stop)) {
+            throw 'state.json.example does not conform to state.schema.json'
+          }
+          Write-Host "state.json.example conforms to state.schema.json" -ForegroundColor Green
 
       - name: Validate config template
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          . ./scripts/lib/ConfigSchema.ps1
           $config = Get-Content config/config.json.template -Raw | ConvertFrom-Json
-          Write-Host "config.json.template is valid JSON" -ForegroundColor Green
+          $errors = @(Test-StartupConfigSchema -Config $config)
+          if ($errors.Count -gt 0) {
+            throw ($errors -join [Environment]::NewLine)
+          }
+          Write-Host "config.json.template conforms to the startup config schema" -ForegroundColor Green
 
   architecture-check:
     name: Architecture Check (scripts/)
@@ -106,6 +122,7 @@ jobs:
       - name: Run ArchitectureCheck
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           Import-Module ./scripts/lib/ArchitectureCheck.psm1 -Force
           $result = Invoke-ArchitectureCheck -Path './scripts'
           Write-Host ("Files checked : {0}" -f $result.CheckedFiles)
@@ -124,13 +141,14 @@ jobs:
       - name: Verify module dependencies
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           Import-Module ./scripts/lib/ArchitectureCheck.psm1 -Force
           $results = @(Test-ModuleDependency -Path '.')
           if ($results.Count -gt 0) {
             $results | Format-Table -AutoSize
             $missing = @($results | Where-Object { $_.Status -eq "MISSING" })
             if ($missing.Count -gt 0) {
-              Write-Warning "$($missing.Count) module dependency issue(s) found"
+              throw "$($missing.Count) module dependency issue(s) found"
             }
           }
           Write-Host "Module dependency check complete" -ForegroundColor Green

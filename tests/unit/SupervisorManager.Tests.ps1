@@ -127,6 +127,44 @@ Describe "Set-SupervisorForProject" {
 }
 
 Describe "Set-SupervisorForRegisteredProjects" {
+    It "2ルートの同名候補を番号選択しても選択パスだけを書き込む" {
+        Import-Module (Join-Path $script:RepoRoot "scripts/lib/StartupMenu.psm1") -Force
+        $internalRoot = Join-Path $TestDrive "internal"
+        $externalRoot = Join-Path $TestDrive "external"
+        $internalProject = Join-Path $internalRoot "Same"
+        $externalProject = Join-Path $externalRoot "Same"
+        New-Item -ItemType Directory -Path $internalProject, $externalProject -Force | Out-Null
+        $config = New-TestSupervisorConfig -Root $internalRoot
+        $config.registeredProjects.roots = @($internalRoot, $externalRoot)
+        $candidates = @(Get-RegisteredProjectCandidate -Config $config)
+        $paths = @(Read-SupervisorProjectSelection -Candidates $candidates -InputText '2')
+
+        $result = @(Set-SupervisorForRegisteredProjects -Config $config -ProjectPaths $paths)
+
+        $result.Count | Should -Be 1
+        $result[0].path | Should -Be $externalProject
+        Test-Path (Join-Path $externalProject '.codex/supervisor.json') | Should -BeTrue
+        Test-Path (Join-Path $internalProject '.codex/supervisor.json') | Should -BeFalse
+    }
+
+    It "曖昧な名前は全対象を書き込む前に拒否する" {
+        $roots = @((Join-Path $TestDrive 'one'), (Join-Path $TestDrive 'two'))
+        foreach ($root in $roots) { New-Item -ItemType Directory -Path (Join-Path $root 'Same') -Force | Out-Null }
+        New-Item -ItemType Directory -Path (Join-Path $roots[0] 'Unique') | Out-Null
+        $config = New-TestSupervisorConfig -Root $roots[0]
+        $config.registeredProjects.roots = $roots
+
+        { Set-SupervisorForRegisteredProjects -Config $config -ProjectNames @('Unique', 'Same') } | Should -Throw '*ProjectPaths*'
+        @(Get-ChildItem -Path $roots -Filter supervisor.json -Recurse -Force).Count | Should -Be 0
+    }
+
+    It "空の明示的パス選択は全件適用しない" {
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive 'Only') | Out-Null
+        $result = @(Set-SupervisorForRegisteredProjects -Config (New-TestSupervisorConfig -Root $TestDrive) -ProjectPaths @())
+        $result.Count | Should -Be 0
+        Test-Path (Join-Path $TestDrive 'Only/.codex/supervisor.json') | Should -BeFalse
+    }
+
     It "ProjectNames 指定時は選択した候補だけに適用する" {
         New-Item -ItemType Directory -Path (Join-Path $TestDrive "Alpha") | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $TestDrive "Beta") | Out-Null
