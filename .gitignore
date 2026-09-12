@@ -13,6 +13,9 @@ state.json
 # Local runtime config (generated from template)
 config/config.json
 
+# Agents API (Managed Plane) local config — approval IDs must never be committed
+config/agents-api.json
+
 # Test artifacts
 testResults.xml
 

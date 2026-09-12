@@ -1,0 +1,60 @@
+{
+  "_comment": "OpenAI Agents API (Codex ハーネスのホスト版) 実行設定契約。コピーして config/agents-api.json に保存し、値を埋めて使う。API キーは必ず環境変数 OPENAI_API_KEY 経由とし、このファイルには絶対に書かない。",
+  "_security": "config/agents-api.json は .gitignore で除外する。コミットしないこと。",
+  "_contract": {
+    "_comment": "読み手: scripts/lib/AgentsApiPayload.psm1。契約不成立時は Goal Router が execution_plane=local へフォールバックする。",
+    "enabled": "bool — Agents API (Managed Plane) の有効化スイッチ。false は常に local。",
+    "mode": "disabled|dry-run|live — live は課金承認(人間決裁)済みのときのみ。dry-run は payload を生成・記録するが API を呼ばない。",
+    "apiBaseUrl": "Agents API ベース URL (既定 https://api.openai.com)",
+    "betaHeader": "OpenAI-Beta ヘッダ値 (既定 agents=v1)",
+    "model": "使用モデル。公式の examples は gpt-6-astra。",
+    "environment.type": "none|openai_hosted|self_hosted。none は Bash/apply-patch/workspace/executor MCP が使えない。",
+    "environment.capability_directories": "skills (SKILL.md) を探索するディレクトリ。サンドボックス内の絶対パス、最大 32 件、既存ディレクトリであること。",
+    "tools": "programmatic_tool_calling | mcp | web_search。Agents API では programmatic_tool_calling は既定で有効。",
+    "multiAgent": "multi_agent 設定。enabled と max_concurrent_subagents (既定 6)。",
+    "localCostGuard": "このリポジトリ独自の事前ゲート。Agents API 自体に session budget フィールドは存在しない (2026-09 時点の公式docに記載なし) ため、live 実行の可否はここで人間承認と見積上限を要求する。",
+    "dataResidency": "米国のみ・ZDR 非対応。本番障害ログ等を投入してよいかは approved で明示管理する。"
+  },
+
+  "enabled": false,
+  "mode": "disabled",
+  "apiBaseUrl": "https://api.openai.com",
+  "betaHeader": "agents=v1",
+  "model": "gpt-6-astra",
+
+  "instructions": "Use connected MCP servers and skills to investigate. Delegate independent investigations to subagents and combine their findings into one report. Do not invent missing details.",
+
+  "environment": {
+    "type": "self_hosted",
+    "workspace_directory": "/workspace",
+    "capability_directories": [
+      "/workspace/capabilities/skills"
+    ]
+  },
+
+  "tools": [
+    { "type": "programmatic_tool_calling" },
+    { "type": "mcp", "server_label": "openai_docs", "transport": { "type": "http", "server_url": "https://developers.openai.com/mcp" } },
+    { "type": "web_search" }
+  ],
+
+  "multiAgent": {
+    "enabled": true,
+    "maxConcurrentSubagents": 4
+  },
+
+  "localCostGuard": {
+    "_comment": "live 実行の条件。approvalId が空のまま live にしない。",
+    "requireExplicitApproval": true,
+    "approvalId": "",
+    "maxEstimatedUsd": null,
+    "note": "Agents API に session budget は無い。モデル/ツール/コンテナ課金が直接発生するため、承認と見積上限をここで管理する。"
+  },
+
+  "dataResidency": {
+    "region": "us",
+    "zdr": false,
+    "approved": false,
+    "approvedNote": "米国データ所在のみ・ZDR 非対応。本番障害ログ等の投入可否を人間が明示承認したときだけ true にする。"
+  }
+}
