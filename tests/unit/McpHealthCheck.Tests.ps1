@@ -69,10 +69,18 @@ InModuleScope McpHealthCheck {
         It "<Dependency> 欠落時は検査コマンドを実行しない" -ForEach @(
             @{ Dependency = 'setsid' }, @{ Dependency = 'sh' }, @{ Dependency = 'kill' }
         ) {
-            $script:MissingDependency = $Dependency
-            Mock Get-Command { throw 'required OS command not found' } -ParameterFilter { $Name -eq $script:MissingDependency }
+            $bin = New-Item -ItemType Directory -Path (Join-Path $TestDrive "bin-$Dependency")
+            foreach ($name in @('setsid', 'sh', 'kill') | Where-Object { $_ -ne $Dependency }) {
+                $source = (Get-Command $name -CommandType Application | Select-Object -First 1).Source
+                New-Item -ItemType SymbolicLink -Path (Join-Path $bin.FullName $name) -Target $source | Out-Null
+            }
             $marker = Join-Path $TestDrive "not-created-$Dependency"
-            { Invoke-McpProcessWithTimeout -Command /usr/bin/touch -Arguments @($marker) } | Should -Throw '*required OS command not found*'
+            $previousPath = $env:PATH
+            try {
+                $env:PATH = $bin.FullName
+                { Invoke-McpProcessWithTimeout -Command /usr/bin/touch -Arguments @($marker) } | Should -Throw "*$Dependency*"
+            }
+            finally { $env:PATH = $previousPath }
             Test-Path $marker | Should -BeFalse
         }
 
@@ -84,17 +92,22 @@ InModuleScope McpHealthCheck {
         }
 
         It "初期応答待ちもタイムアウトに含め検査コマンドを実行しない" {
-            $script:SilentSessionCommand = Join-Path $TestDrive "silent-setsid"
+            $bin = New-Item -ItemType Directory -Path (Join-Path $TestDrive "silent-bin")
+            $silentSessionCommand = Join-Path $bin.FullName "setsid"
             @'
 #!/bin/sh
-sleep 30
-'@ | Set-Content -LiteralPath $script:SilentSessionCommand -Encoding utf8NoBOM
-            & chmod +x $script:SilentSessionCommand
-            Mock Get-Command { [pscustomobject]@{ Source = $script:SilentSessionCommand } } -ParameterFilter { $Name -eq 'setsid' }
+exec /usr/bin/sleep 30
+'@ | Set-Content -LiteralPath $silentSessionCommand -Encoding utf8NoBOM
+            & chmod +x $silentSessionCommand
             $marker = Join-Path $TestDrive "not-created-timeout"
             $timer = [System.Diagnostics.Stopwatch]::StartNew()
 
-            $result = Invoke-McpProcessWithTimeout -Command /usr/bin/touch -Arguments @($marker) -TimeoutSec 1
+            $previousPath = $env:PATH
+            try {
+                $env:PATH = $bin.FullName + [System.IO.Path]::PathSeparator + $previousPath
+                $result = Invoke-McpProcessWithTimeout -Command /usr/bin/touch -Arguments @($marker) -TimeoutSec 1
+            }
+            finally { $env:PATH = $previousPath }
 
             $result.TimedOut | Should -BeTrue
             $timer.Elapsed.TotalSeconds | Should -BeLessThan 5
