@@ -943,8 +943,7 @@ function Get-CodexGoalList {
         (メニュー表示を止めないため)。
     #>
     param(
-        [string]$CodexHome,
-        [int]$TimeoutSec = 15
+        [string]$CodexHome
     )
 
     $dbPath = Get-CodexGoalDatabasePath -CodexHome $CodexHome

@@ -251,9 +251,7 @@ function Get-GoalRouterEvidence {
         [Parameter(Mandatory = $true)][string]$ProjectDir,
         [AllowEmptyString()][string]$Intent = "",
         [switch]$SkipGitHub,
-        [switch]$SkipRuntime,
-        [int]$RuntimeErrorThreshold = $script:DefaultRuntimeErrorThreshold,
-        [int]$CommandTimeoutSec = 10
+        [switch]$SkipRuntime
     )
 
     $ev = [ordered]@{}
