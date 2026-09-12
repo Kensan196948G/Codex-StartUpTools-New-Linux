@@ -102,11 +102,111 @@ E2E テストは thread と rollout を実際に生成するため、既定で�
 
 - **app-server は experimental。** 本モジュールは `codex app-server` の stdio インターフェースに依存する。
   破壊的変更があれば `Invoke-CodexGoalSessionRpc` の層で吸収する。
-- **`Start-CodexGoalRun` はスレッドを「登録」するが駆動はしない。**
-  Goal の自動継続はスレッドが app-server にロードされている間だけ働く。
-  継続させるには `codex resume <threadId>` で接続するか、セッションを保持し続ける必要がある。
-  CLI は終了時にその案内を表示する。
-- **Goal Router は未移植。** どの Goal を選ぶかの自動決定（Evidence → Primary/Specialized、
-  session lock、reroute）は本移植の範囲外。`docs/analysis/openai-agents-api-codex-goal-adoption-study.md`
-  のレーンB を参照。
-- **OpenAI Agents API（Managed Plane）は未着手。** 同ドキュメントのレーンC を参照。
+- **`active writer` と stdin EOF。** 強制 Kill はスレッドを汚すため、`Close-CodexGoalSession` は
+  stdin を閉じて正常終了を待つ。外部からプロセスを kill すると同じ症状が出る。
+- **`codex doctor` の `rollout files are missing from the state DB`** は本件とは無関係の既存の
+  データ衛生警告。本移植では触れていない。
+
+---
+
+## 6. 追補（2026-09-12）: 外部駆動・一覧・Goal Router・メニュー統合
+
+初版の「次の段階」に挙げていた項目を実装した。
+
+### 6.1 app-server は Goal を自動継続しない（実測）
+
+`thread/goal/set` → `turn/start` を実行し 100 秒観測した結果:
+
+| 観測 | 結果 |
+|---|---|
+| `turn/started` | 届く |
+| `thread/goal/updated` | 届く（status=active, tokensUsed=7997） |
+| `turn/completed` | 届く |
+| **自動の継続 turn** | **届かない** |
+
+app-server 単体では Goal は回らない（TUI 側の idle 継続に依存している）。
+したがって継続は**外部から駆動する**必要がある。
+
+### 6.2 `Invoke-CodexGoalRun` — セッション保持型ドライバ
+
+`turn/start` → `turn/completed` 待ち → `thread/goal/get` で status 確認 → 継続 turn 送出
+というループを **同一 app-server セッションを保持したまま** 回す。
+終端 status（`complete` / `blocked` / `usageLimited` / `budgetLimited`）または
+`MaxTurns` / `MaxMinutes` / turn タイムアウトで停止する。
+
+継続プロンプトは Codex ネイティブの継続指示と同じ規律（目的を縮小しない / 証拠で判断 /
+progress と verified wait の区別 / 3 ターン連続の同一ブロッカーで blocked）を外部から与える。
+`Get-CodexGoalContinuationPrompt` がそれを生成する。
+
+CLI: `Invoke-CodexGoal.ps1 -Action run -Template <goals/*.md> [-MaxTurns N] [-MaxMinutes N]`
+
+**実機検証**: 1 ターンで `finalStatus=complete` / `stopReason=goal-complete` を確認。
+モデルが `update_goal status=complete` を呼び、ドライバがそれを検出して停止した。
+
+### 6.3 実装中に踏んだ 2 つの罠（再発防止のため記録）
+
+1. **通知バッファの循環で応答が永久に来ない。** RPC 応答待ちで「応答でない行」を
+   バッファへ戻す実装にすると、バッファを巡回し続けて stdout を読まなくなり
+   `thread/start` がタイムアウトする。→ RPC 応答待ちは `Read-CodexGoalSessionStdoutLine`
+   （バッファを見ない直接読み）を使い、通知は一方向でバッファへ退避する。
+2. **`List[object]` を `@()` で包むと `[pscustomobject]` リテラルが失敗する。**
+   `Argument types do not match` になる（`List[string]` は問題ない）。→ `.ToArray()` を使う。
+
+### 6.4 Goal 一覧（`Get-CodexGoalList`）
+
+`~/.codex/goals_1.sqlite` の `thread_goals` を読み取り専用で読む。
+PowerShell に sqlite が無いため python3 → sqlite3 CLI の順にフォールバックし、
+どちらも無ければ `Available=$false` を返して例外にしない（メニューを止めない）。
+CLI: `Invoke-CodexGoal.ps1 -Action list`
+
+### 6.5 Goal Router（レーンB）— `scripts/lib/GoalRouter.psm1`
+
+Claude 側 `lib/goal-router.sh`（ClaudeOS v10.1）の判定ロジックを忠実に移植した。
+
+| 機能 | 実装 |
+|---|---|
+| Primary 5 / Specialized 6 の分類と許可関係 | `Test-GoalRouter*` / `Test-GoalRouterAllows` |
+| Evidence 収集（state.json / git / CI / gh / runtime / intent） | `Get-GoalRouterEvidence`（外部 I/O はここに閉じ込め） |
+| 13 段階の優先順位ルーティング | `Invoke-GoalRouterRoute`（**純粋関数**） |
+| session lock（既定 720 分）と reroute 条件 | `Invoke-GoalRouterRoute` 内 |
+| fail-safe（必ず 1 つの Goal を返す） | 同上 |
+| state.json の `goal_router` ブロックへの原子的永続化 | `Save-GoalRouterState` |
+| Goal テンプレート解決（プロジェクト優先 → mvp-release フォールバック） | `Get-GoalTemplatePath` |
+
+Router の出力（`effective`）を `Get-GoalTemplatePath` → `Get-CodexGoalObjectiveFromTemplate`
+→ `Invoke-CodexGoalRun` へ渡すことで、「どの Goal を選ぶか」と「どう回すか」が繋がる。
+
+### 6.6 Goal テンプレート 11 本（`config/goals/*.md`）
+
+Primary 5 + Specialized 6 を Codex 向けに書き起こした（Claude 側から移植・適応）。
+各テンプレートは `/goal "` 〜 閉じ `"` 規約で objective を埋め込み、実測 1,067〜1,409 字
+（Codex の上限 4,000 字以内）。Claude 固有の機構（DynamicWorkflows / AgentTeams /
+CodeRabbit 等）は Codex の相当物（サブエージェント / `.codex/agents/*.toml` / `codex review`）へ置換した。
+
+**ループ条件（`- or stop after N turns`）は意図的に書いていない。** 継続は Codex ハーネス側の
+no-progress 判定と本ドライバが担うため、二重管理になると衝突する。
+
+### 6.7 メニュー統合（A3）
+
+`StartupMenu.psm1` に `14. Goal 管理` を追加（`Invoke-GoalManagementAction`）。
+
+1. Goal Router の判定を **`-NoPersist -SkipGitHub -SkipRuntime`** で表示（メニュー操作だけで
+   state.json を書き換えたりネットワークを使ったりしない）
+2. `Get-CodexGoalList` で現在の Goal 一覧（thread / status / tokens / objective）を表示
+3. 11 テンプレートから番号選択し、`yes` 確認後にのみ `-Action start` を実行
+
+### 6.8 レーンC — Agents API の dry-run 契約
+
+`scripts/lib/AgentsApiPayload.psm1` + `config/agents-api.json.template`。
+詳細は `docs/migration/openai-agents-api-dryrun.md` を参照。
+
+### 6.9 検証結果（追補分）
+
+| 種別 | 結果 |
+|---|---|
+| Pester 全件 | **394 passed / 0 failed / 1 skipped**（追補前は 289） |
+| ArchitectureCheck | CheckedFiles 55 / TotalViolations 0 / Passed true |
+| GoalRouter 単体 | 58 件（分類・intent 優先順位・13 ルール・lock/reroute・fail-safe・永続化・テンプレート整合） |
+| CodexGoalClient 単体 | 44 件（うち実機 E2E 1 件は opt-in） |
+| AgentsApiPayload 単体 | 33 件 |
+| 実機ドライバ | 1 ターンで `complete` を検出、検証用 Goal は削除済み |

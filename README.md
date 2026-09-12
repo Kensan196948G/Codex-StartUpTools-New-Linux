@@ -29,7 +29,10 @@
 | ✅ | リリース前チェック | Pester / Architecture / DryRun / README / Git状態を統合確認 |
 | ✅ | GitHub PR確認 | Draft PR / CI / gh auth を確認。作成は明示実行 |
 | ✅ | 最近プロジェクト再起動 | Codex履歴から番号選択で再起動 |
-| ✅ | Codex ネイティブ Goal | `Invoke-CodexGoal.ps1` で非対話に Goal 設定/取得/削除。`[goals] max_goal_token_budget = 500000` で予算を既定化 |
+| ✅ | Codex ネイティブ Goal | `Invoke-CodexGoal.ps1` で非対話に Goal 設定/取得/駆動/一覧/削除。`[goals] max_goal_token_budget = 500000` で予算を既定化 |
+| ✅ | Goal Router | `scripts/lib/GoalRouter.psm1` が Evidence（state / git / CI / runtime / intent）から Primary 5 + Specialized 6 を自動決定。lock / reroute / fail-safe 付き |
+| ✅ | Goal テンプレート | `config/goals/*.md` に 11 本（Codex 向けに書き起こし、全て 4,000 字以内） |
+| ✅ | Agents API dry-run 契約 | `scripts/lib/AgentsApiPayload.psm1` + `config/agents-api.json.template`。live は既定拒否 |
 | 🚫 | SSH接続 | 削除。ローカルプロジェクト起動のみ |
 | 🚫 | Claude / Copilot起動 | 対象外 |
 | 🤖 | 通常PRのmerge | 品質ゲート充足で `gh pr merge --auto --squash`（`AGENTS.md` §6 / `GITHUB_POLICY.md`） |
@@ -53,6 +56,7 @@
 | `11` | 🗂️ | プロジェクト候補管理 | 登録候補の除外・カテゴリを番号で管理 |
 | `12` | ✅ | リリース前チェック | Pester / Architecture / DryRun / README / Git状態を統合確認 |
 | `13` | 🔀 | GitHub PR確認 | Draft PR / CI / gh auth を確認。作成は明示実行 |
+| `14` | 🎯 | Goal 管理 | Goal Router 判定 / Codex Goal 一覧 / テンプレートから Goal 設定 |
 
 ## 🧩 全体アーキテクチャ
 
@@ -307,6 +311,62 @@ pwsh scripts/main/Invoke-CodexGoal.ps1 -Action clear -ThreadId <thread-id>
 
 設計上の制約（スレッド所有権・`active writer`・予算の意味）は
 `docs/migration/codex-native-goal.md` に記録しています。
+
+### どの Goal を選ぶか — Goal Router
+
+Codex ネイティブ Goal は「与えられた Goal をどう回すか」を担いますが、
+「どの Goal を選ぶか」は人間が `/goal` と打つしかありません。
+`GoalRouter.psm1` が Project 状態と Evidence から Primary 5 + Specialized 6 を自動決定します。
+
+```powershell
+Import-Module ./scripts/lib/GoalRouter.psm1 -Force
+
+# 判定のみ（state.json を書き換えず、ネットワークも使わない）
+$route = Resolve-GoalRouter -ProjectDir . -NoPersist -SkipGitHub -SkipRuntime
+$route.Effective      # 例: deep-debug
+$route.Confidence     # 例: 0.85
+$route.Transition     # new / kept / reroute / lock-expired / unchanged / routed / unlocked
+
+# 判定して state.json の goal_router ブロックへ永続化
+Resolve-GoalRouter -ProjectDir . -Trigger cli | Out-Null
+
+# Router の判定を Goal テンプレートへ繋いで駆動
+$template = Get-GoalTemplatePath -ProjectDir . -GoalType $route.Effective
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action run -Template $template
+```
+
+優先順位（競合時）: security-emergency > deep-debug（runtime incident > CI failure >
+Cloudflare deploy failure）> hotfix > product-assurance > production-release > assessment >
+mvp-release > development。session lock（既定 720 分）中は前回の Goal を維持し、
+Security Critical / CI の新規失敗 / health の down 遷移 / deploy.ready 変化 / phase_mode 変化 /
+ユーザー新指示 / 明示 reroute のときだけ再判定します。
+
+`-Action list` で現在の Goal を一覧できます。
+
+```bash
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action list
+```
+
+## ☁️ OpenAI Agents API（Managed Plane）— dry-run 契約
+
+OpenAI がホストする Codex ハーネス（Agents API、公開ベータ）向けの設定契約です。
+`scripts/lib/AgentsApiPayload.psm1` が `POST /v1/agents/sessions` のボディを
+**API を呼ばずに**生成・検証します。
+
+```powershell
+Import-Module ./scripts/lib/AgentsApiPayload.psm1 -Force
+$r = Invoke-AgentsApiDryRun -RepoRoot . -InputText "Investigate the incident"
+$r.Payload     # 公式docの実例と同型の session body
+$r.Curl        # API キーは $OPENAI_API_KEY 参照のまま
+$r.LiveAllowed # 既定は $false
+```
+
+- 既定は `enabled=false` / `mode=disabled`。**live は fail-safe で拒否**されます。
+- `localCostGuard.approvalId`（課金承認）と `dataResidency.approved`（米国所在のみ・
+  **ZDR 非対応**の明示承認）が揃わない限り live になりません。
+- **Agents API には session budget フィールドが存在しません**（Anthropic 版の
+  `max_list_cost` に相当するものが公式docに無い）。予算統制は API ではなく
+  ローカルゲートで行います。詳細は `docs/migration/openai-agents-api-dryrun.md`。
 
 ## 🧪 検証コマンド
 

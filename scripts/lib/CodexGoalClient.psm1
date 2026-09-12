@@ -293,6 +293,7 @@ function New-CodexGoalSession {
         CodexCommand     = $CodexCommand
         WorkingDirectory = $WorkingDirectory
         Initialized      = $false
+        PendingEvents    = New-Object System.Collections.Generic.List[string]
     }
 
     return $session
@@ -369,21 +370,141 @@ function Invoke-CodexGoalSessionRpc {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        $task = $Session.Process.StandardOutput.ReadLineAsync()
-        if (-not $task.Wait($TimeoutSec * 1000)) {
+        $remaining = [int][math]::Max(1, ($deadline - (Get-Date)).TotalSeconds)
+        $line = Read-CodexGoalSessionStdoutLine -Session $Session -TimeoutSec $remaining
+        if ($null -eq $line) {
             throw "timeout waiting for codex app-server response (id=$id method=$Method)"
         }
-        if ($null -eq $task.Result) {
-            throw "codex app-server closed stdout before responding (id=$id method=$Method)"
-        }
 
-        $response = ConvertFrom-CodexGoalRpcResponse -Line $task.Result -Id $id
-        if ($null -eq $response) { continue }   # 通知は読み捨て
+        $response = ConvertFrom-CodexGoalRpcResponse -Line $line -Id $id
+        if ($null -eq $response) {
+            # 通知は後段のイベント待ち (Wait-CodexGoalTurnCompleted) が読めるよう退避する。
+            $Session.PendingEvents.Add($line)
+            continue
+        }
 
         return Get-CodexGoalRpcResult -Response $response
     }
 
     throw "timeout waiting for codex app-server response (id=$id method=$Method)"
+}
+
+function Read-CodexGoalSessionStdoutLine {
+    <#
+    .SYNOPSIS
+        セッションの stdout から次の 1 行を直接読む (バッファを見ない)。timeout なら $null。
+    .DESCRIPTION
+        RPC 応答待ちは必ずこちらを使う。バッファ (PendingEvents) を経由させると、
+        応答でない通知を再びバッファへ戻す循環が生じて stdout を読まなくなり、
+        応答が永久に来なくなる (実測で発生)。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Session,
+        [int]$TimeoutSec = $script:DefaultRpcTimeoutSec
+    )
+
+    $task = $Session.Process.StandardOutput.ReadLineAsync()
+    if (-not $task.Wait([math]::Max(1, $TimeoutSec) * 1000)) { return $null }
+    return $task.Result
+}
+
+function Read-CodexGoalSessionLine {
+    <#
+    .SYNOPSIS
+        通知バッファを優先して次の 1 行を返す (イベント待ち用)。timeout なら $null。
+    .DESCRIPTION
+        RPC 応答待ちの間に届いた通知を取りこぼさないための読み取り口。
+        RPC 応答そのものを待つ用途には使わない (Read-CodexGoalSessionStdoutLine を使う)。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Session,
+        [int]$TimeoutSec = $script:DefaultRpcTimeoutSec
+    )
+
+    if ($Session.PendingEvents.Count -gt 0) {
+        $buffered = $Session.PendingEvents[0]
+        $Session.PendingEvents.RemoveAt(0)
+        return $buffered
+    }
+
+    return Read-CodexGoalSessionStdoutLine -Session $Session -TimeoutSec $TimeoutSec
+}
+
+function Get-CodexGoalPropertySafe {
+    <#
+    .SYNOPSIS
+        入れ子オブジェクトから安全にプロパティを取り出す (内部ヘルパ)。
+    #>
+    param(
+        [AllowNull()][object]$InputObject,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($null -eq $InputObject) { return $null }
+    if (-not (Test-CodexPropertyExists -InputObject $InputObject -Name $Name)) { return $null }
+    return $InputObject.$Name
+}
+
+function Wait-CodexGoalTurnCompleted {
+    <#
+    .SYNOPSIS
+        次に turn/completed が届くまで通知を読み続ける。
+    .DESCRIPTION
+        実測 (0.154.0): app-server は turn 完了後に Goal を自動継続しない。
+        turn/completed 後も goal.status は active のままで、次の turn/started は来ない。
+        したがって継続は呼び出し側 (Invoke-CodexGoalRun) が駆動する必要がある。
+    .OUTPUTS
+        [pscustomobject] TurnCompleted / GoalStatus / Goal / TimedOut / Events
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Session,
+        [int]$TimeoutSec = 1800
+    )
+
+    $events = New-Object System.Collections.Generic.List[string]
+    $goalStatus = $null
+    $goal = $null
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+
+    while ((Get-Date) -lt $deadline) {
+        $remaining = [int][math]::Max(1, ($deadline - (Get-Date)).TotalSeconds)
+        $line = Read-CodexGoalSessionLine -Session $Session -TimeoutSec ([math]::Min($remaining, 30))
+        if ($null -eq $line) { continue }   # 無音は継続 (timeout ではない)
+
+        $parsed = $null
+        try { $parsed = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if ($null -eq $parsed) { continue }
+        if (-not (Test-CodexPropertyExists -InputObject $parsed -Name "method")) { continue }
+
+        $method = [string]$parsed.method
+        $events.Add($method)
+
+        if ($method -eq "thread/goal/updated") {
+            $g = Get-CodexGoalPropertySafe -InputObject $parsed.params -Name "goal"
+            if ($null -ne $g) {
+                $goal = $g
+                $goalStatus = [string](Get-CodexGoalPropertySafe -InputObject $g -Name "status")
+            }
+        }
+
+        if ($method -eq "turn/completed") {
+            return [pscustomobject]@{
+                TurnCompleted = $true
+                GoalStatus    = $goalStatus
+                Goal          = $goal
+                TimedOut      = $false
+                Events        = @($events)
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        TurnCompleted = $false
+        GoalStatus    = $goalStatus
+        Goal          = $goal
+        TimedOut      = $true
+        Events        = @($events)
+    }
 }
 
 # ------------------------------------------------------------
@@ -597,6 +718,277 @@ function Clear-CodexThreadGoal {
     }
 }
 
+function Get-CodexGoalTerminalStatuses {
+    <#
+    .SYNOPSIS
+        Goal がそれ以上継続しない終端 status の一覧。
+    #>
+    return @("complete", "blocked", "usageLimited", "budgetLimited")
+}
+
+function Get-CodexGoalContinuationPrompt {
+    <#
+    .SYNOPSIS
+        外部駆動で継続ターンを送るときの既定プロンプト。
+    .DESCRIPTION
+        Codex ネイティブの継続プロンプトと同じ規律 (目的を縮小しない / 証拠で判断 /
+        progress と verified wait の区別 / 3 ターン連続の同一ブロッカーで blocked)
+        を外部から与える。app-server は自動継続しないため、この文面が継続の実体になる。
+    #>
+    param([Parameter(Mandatory = $true)][string]$Objective)
+
+    return @"
+Continue working toward the active thread goal. The objective is:
+
+<objective>
+$Objective
+</objective>
+
+Continuation behavior:
+- Keep the full objective intact. Do not shrink it to what fits in this turn.
+- If it cannot be finished now, make concrete progress toward the real end state and leave the goal active.
+- Temporary rough edges are acceptable while work moves in the right direction.
+
+Work from evidence:
+- Treat the current worktree and external state as authoritative. Inspect them before relying on prior context.
+- Re-read files and re-run commands rather than assuming the previous turn's state still holds.
+
+Progress check:
+- Decide whether the previous turn made progress, was a verified wait, or made no progress.
+- Progress changes authoritative state or yields evidence that changes the next action. Restating status is not progress.
+- Do not repeat an action that already failed without new evidence.
+
+Completion:
+- If the objective is achieved and verified, call update_goal with status complete.
+- Only set blocked if the same blocking condition has persisted for at least three consecutive goal turns.
+- Do not mark complete merely because the token budget is nearly exhausted.
+"@
+}
+
+function Invoke-CodexGoalRun {
+    <#
+    .SYNOPSIS
+        Goal を終端 status まで外部駆動する (セッション保持型ドライバ)。
+    .DESCRIPTION
+        実測 (codex-cli 0.154.0): app-server は turn 完了後に Goal を自動継続しない。
+        そのため、turn/start → turn/completed 待ち → goal.status 確認 → 継続 turn 送出
+        というループを本関数が回す。app-server セッションは実行中ずっと保持する。
+    .PARAMETER MaxTurns
+        継続を含む最大ターン数。暴走防止の一次上限。
+    .PARAMETER MaxMinutes
+        壁時計での上限。turn の timeout とは別。
+    .PARAMETER OnEvent
+        進捗通知用の任意コールバック。引数に [pscustomobject] を渡す。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Objective,
+        [int64]$TokenBudget,
+        [string]$WorkingDirectory,
+        [string]$CodexCommand = $script:DefaultCodexCommand,
+        [int]$MaxTurns = 20,
+        [int]$MaxMinutes = 120,
+        [int]$TurnTimeoutSec = 1800,
+        [scriptblock]$OnEvent,
+        [string]$ContinuationPrompt
+    )
+
+    if (-not $WorkingDirectory) { $WorkingDirectory = (Get-Location).Path }
+    if (-not $ContinuationPrompt) { $ContinuationPrompt = Get-CodexGoalContinuationPrompt -Objective $Objective }
+
+    $check = Test-CodexGoalObjective -Objective $Objective
+    if (-not $check.Valid) {
+        throw "invalid goal objective ($($check.Reason), length=$($check.Length), max=$script:GoalObjectiveMaxLength)"
+    }
+
+    $terminal = Get-CodexGoalTerminalStatuses
+    $turns = New-Object System.Collections.Generic.List[object]
+    $session = $null
+    $threadId = $null
+
+    try {
+        $session = New-CodexGoalSession -CodexCommand $CodexCommand -WorkingDirectory $WorkingDirectory
+
+        $startResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/start" `
+            -Parameters @{ cwd = $WorkingDirectory } -TimeoutSec 60
+        $thread = Get-CodexGoalPropertySafe -InputObject $startResult -Name "thread"
+        if ($null -eq $thread -or -not $thread.id) { throw "thread/start did not return a thread id" }
+        $threadId = $thread.id
+
+        $goal = Set-CodexThreadGoalInternal -Session $session -ThreadId $threadId -Objective $Objective `
+            -Status "active" -TokenBudget $TokenBudget -HasTokenBudget:$PSBoundParameters.ContainsKey("TokenBudget") `
+            -TimeoutSec 60
+        $status = [string](Get-CodexGoalPropertySafe -InputObject $goal -Name "status")
+
+        $deadline = (Get-Date).AddMinutes($MaxMinutes)
+
+        for ($turn = 1; $turn -le $MaxTurns; $turn++) {
+            if ($status -in $terminal) { break }
+            if ((Get-Date) -ge $deadline) { break }
+
+            $text = if ($turn -eq 1) { $Objective } else { $ContinuationPrompt }
+            [void](Invoke-CodexGoalSessionRpc -Session $session -Method "turn/start" `
+                    -Parameters @{ threadId = $threadId; input = @(@{ type = "text"; text = $text }) } `
+                    -TimeoutSec 60)
+
+            $wait = Wait-CodexGoalTurnCompleted -Session $session -TimeoutSec $TurnTimeoutSec
+
+            $statusResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/goal/get" `
+                -Parameters @{ threadId = $threadId } -TimeoutSec 60
+            $currentGoal = Get-CodexGoalPropertySafe -InputObject $statusResult -Name "goal"
+            if ($null -eq $currentGoal) { $currentGoal = $statusResult }
+            $status = [string](Get-CodexGoalPropertySafe -InputObject $currentGoal -Name "status")
+
+            $record = [pscustomobject]@{
+                Turn          = $turn
+                TurnCompleted = $wait.TurnCompleted
+                TimedOut      = $wait.TimedOut
+                GoalStatus    = $status
+                TokensUsed    = Get-CodexGoalPropertySafe -InputObject $currentGoal -Name "tokensUsed"
+                TimeUsedSec   = Get-CodexGoalPropertySafe -InputObject $currentGoal -Name "timeUsedSeconds"
+            }
+            $turns.Add($record)
+            # コールバックの出力はホストへ流す。パイプラインへ流すと
+            # Invoke-CodexGoalRun の戻り値に混ざるため。
+            if ($OnEvent) { & $OnEvent $record | Write-Host }
+
+            if ($wait.TimedOut) { break }
+        }
+
+        $finalGoal = $null
+        if ($threadId) {
+            $finalResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/goal/get" `
+                -Parameters @{ threadId = $threadId } -TimeoutSec 60
+            $finalGoal = Get-CodexGoalPropertySafe -InputObject $finalResult -Name "goal"
+            if ($null -eq $finalGoal) { $finalGoal = $finalResult }
+        }
+
+        $finalStatus = if ($finalGoal) { [string](Get-CodexGoalPropertySafe -InputObject $finalGoal -Name "status") } else { $status }
+        $stopReason = if ($finalStatus -in $terminal) { "goal-$finalStatus" }
+        elseif ((Get-Date) -ge $deadline) { "time-limit" }
+        elseif ($turns.Count -ge $MaxTurns) { "max-turns" }
+        else { "turn-timeout" }
+
+        return [pscustomobject]@{
+            ThreadId    = $threadId
+            Objective   = $Objective
+            FinalStatus = $finalStatus
+            StopReason  = $stopReason
+            # List[object] を @() で包むと [pscustomobject] リテラルが
+            # "Argument types do not match" で失敗するため ToArray() を使う。
+            Turns       = $turns.ToArray()
+            Goal        = $finalGoal
+        }
+    }
+    finally {
+        Close-CodexGoalSession -Session $session
+    }
+}
+
+# ------------------------------------------------------------
+# Goal 一覧 (goals_1.sqlite の読み取り)
+# ------------------------------------------------------------
+
+function Get-CodexGoalDatabasePath {
+    <#
+    .SYNOPSIS
+        Codex の goals DB のパスを返す。CODEX_HOME 未設定なら ~/.codex。
+    #>
+    param([string]$CodexHome)
+
+    if (-not $CodexHome) {
+        $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+    }
+    return (Join-Path $CodexHome "goals_1.sqlite")
+}
+
+function ConvertFrom-CodexGoalListJson {
+    <#
+    .SYNOPSIS
+        goals DB から読み出した JSON 行を Goal オブジェクトへ変換する (純粋関数)。
+    #>
+    param([AllowEmptyString()][AllowNull()][string]$Json)
+
+    if ([string]::IsNullOrWhiteSpace($Json)) { return @() }
+
+    $parsed = $null
+    try { $parsed = $Json | ConvertFrom-Json -ErrorAction Stop } catch { return @() }
+    if ($null -eq $parsed) { return @() }
+
+    $rows = if ($parsed -is [System.Collections.IEnumerable] -and $parsed -isnot [string]) { @($parsed) } else { @($parsed) }
+
+    $out = @()
+    foreach ($row in $rows) {
+        if ($null -eq $row) { continue }
+        $out += [pscustomobject]@{
+            ThreadId        = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "thread_id")
+            Status          = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "status")
+            Objective       = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "objective")
+            TokenBudget     = Get-CodexGoalPropertySafe -InputObject $row -Name "token_budget"
+            TokensUsed      = Get-CodexGoalPropertySafe -InputObject $row -Name "tokens_used"
+            TimeUsedSeconds = Get-CodexGoalPropertySafe -InputObject $row -Name "time_used_seconds"
+            UpdatedAtMs     = Get-CodexGoalPropertySafe -InputObject $row -Name "updated_at_ms"
+        }
+    }
+
+    return $out
+}
+
+function Get-CodexGoalList {
+    <#
+    .SYNOPSIS
+        Codex の goals DB から現在の Goal 一覧を読む (読み取り専用)。
+    .DESCRIPTION
+        PowerShell に sqlite が無いため python3 → sqlite3 CLI の順で外部コマンドを使う。
+        どちらも無い / DB が無い場合は Available=$false と Reason を返し、例外にしない
+        (メニュー表示を止めないため)。
+    #>
+    param(
+        [string]$CodexHome,
+        [int]$TimeoutSec = 15
+    )
+
+    $dbPath = Get-CodexGoalDatabasePath -CodexHome $CodexHome
+    if (-not (Test-Path -LiteralPath $dbPath -PathType Leaf)) {
+        return [pscustomobject]@{ Available = $false; Reason = "goals-db-not-found"; DatabasePath = $dbPath; Goals = @() }
+    }
+
+    $query = "SELECT thread_id,status,objective,token_budget,tokens_used,time_used_seconds,updated_at_ms FROM thread_goals ORDER BY updated_at_ms DESC"
+    $json = $null
+    $tool = $null
+
+    if (Get-Command python3 -ErrorAction SilentlyContinue) {
+        $py = @"
+import json,sqlite3,sys
+try:
+    c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)
+    rows=[dict(zip(['thread_id','status','objective','token_budget','tokens_used','time_used_seconds','updated_at_ms'],r))
+          for r in c.execute(sys.argv[2])]
+    print(json.dumps(rows,ensure_ascii=False))
+except Exception:
+    sys.exit(1)
+"@
+        $json = & python3 -c $py $dbPath $query 2>$null
+        if ($LASTEXITCODE -eq 0) { $tool = "python3" } else { $json = $null }
+    }
+
+    if ($null -eq $json -and (Get-Command sqlite3 -ErrorAction SilentlyContinue)) {
+        $raw = & sqlite3 -readonly -json $dbPath $query 2>$null
+        if ($LASTEXITCODE -eq 0) { $json = $raw; $tool = "sqlite3" }
+    }
+
+    if ($null -eq $json) {
+        return [pscustomobject]@{ Available = $false; Reason = "no-sqlite-reader"; DatabasePath = $dbPath; Goals = @() }
+    }
+
+    return [pscustomobject]@{
+        Available    = $true
+        Reason       = "ok"
+        DatabasePath = $dbPath
+        Tool         = $tool
+        Goals        = @(ConvertFrom-CodexGoalListJson -Json ([string]::Join("", @($json))))
+    }
+}
+
 Export-ModuleMember -Function @(
     "Get-CodexGoalObjectiveMaxLength",
     "Test-CodexGoalObjective",
@@ -606,9 +998,18 @@ Export-ModuleMember -Function @(
     "Get-CodexGoalRpcResult",
     "New-CodexGoalSession",
     "Close-CodexGoalSession",
+    "Read-CodexGoalSessionStdoutLine",
+    "Read-CodexGoalSessionLine",
     "Invoke-CodexGoalSessionRpc",
+    "Wait-CodexGoalTurnCompleted",
     "Start-CodexGoalRun",
     "Set-CodexThreadGoal",
     "Get-CodexThreadGoal",
-    "Clear-CodexThreadGoal"
+    "Clear-CodexThreadGoal",
+    "Get-CodexGoalTerminalStatuses",
+    "Get-CodexGoalContinuationPrompt",
+    "Invoke-CodexGoalRun",
+    "Get-CodexGoalDatabasePath",
+    "ConvertFrom-CodexGoalListJson",
+    "Get-CodexGoalList"
 )

@@ -10,9 +10,11 @@
 # 使い方:
 #   Invoke-CodexGoal.ps1 -Action validate -Template <goals/*.md>   # 抽出と 4,000 字検証のみ
 #   Invoke-CodexGoal.ps1 -Action start    -Template <goals/*.md>   # 新規スレッド + Goal 設定
+#   Invoke-CodexGoal.ps1 -Action run      -Template <goals/*.md>   # 終端 status まで外部駆動
 #   Invoke-CodexGoal.ps1 -Action set      -ThreadId <id> -Objective "<text>"
 #   Invoke-CodexGoal.ps1 -Action get      -ThreadId <id>
 #   Invoke-CodexGoal.ps1 -Action clear    -ThreadId <id>
+#   Invoke-CodexGoal.ps1 -Action list                       # goals DB の Goal 一覧
 #
 #   -DryRun : objective を解決・検証して表示するだけ (RPC を呼ばない)
 #
@@ -22,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("validate", "start", "set", "get", "clear")]
+    [ValidateSet("validate", "start", "run", "set", "get", "clear", "list")]
     [string]$Action,
 
     [string]$Template,
@@ -31,6 +33,8 @@ param(
     [int64]$TokenBudget,
     [string]$WorkingDirectory,
     [string]$CodexCommand = "codex",
+    [int]$MaxTurns = 20,
+    [int]$MaxMinutes = 120,
     [switch]$DryRun
 )
 
@@ -66,6 +70,22 @@ try {
                 exit 2
             }
             Write-Output "OK objective length=$($check.Length) max=$(Get-CodexGoalObjectiveMaxLength)"
+            exit 0
+        }
+
+        "list" {
+            $result = Get-CodexGoalList
+            if (-not $result.Available) {
+                Write-Output "goal list unavailable: $($result.Reason) ($($result.DatabasePath))"
+                exit 1
+            }
+            if ($result.Goals.Count -eq 0) {
+                Write-Output "no goals"
+                exit 0
+            }
+            $result.Goals | Select-Object ThreadId, Status, TokensUsed, TimeUsedSeconds, @{
+                Name = "Objective"; Expression = { if ($_.Objective.Length -gt 60) { $_.Objective.Substring(0, 60) + "..." } else { $_.Objective } }
+            } | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
             exit 0
         }
 
@@ -138,7 +158,40 @@ try {
             $run = Start-CodexGoalRun @startArgs
             Write-Output "thread=$($run.ThreadId)"
             $run.Goal | ConvertTo-Json -Depth 6
-            Write-Output "次: codex resume $($run.ThreadId) でスレッドへ接続すると自動継続が働きます。"
+            Write-Output "Goal を登録しました。app-server は自動継続しないため、駆動には -Action run を使うか、"
+            Write-Output "codex resume $($run.ThreadId) でスレッドへ接続してください。"
+            exit 0
+        }
+
+        "run" {
+            $resolved = Resolve-GoalObjective -TemplatePath $Template -ObjectiveText $Objective -HasObjective:$script:HasObjectiveArg
+            $check = Test-CodexGoalObjective -Objective $resolved
+            if (-not $check.Valid) {
+                [Console]::Error.WriteLine("objective が不正です: $($check.Reason) (length=$($check.Length), max=$(Get-CodexGoalObjectiveMaxLength))")
+                exit 2
+            }
+            if ($DryRun) {
+                Write-Output "[dry-run] run goal length=$($check.Length) maxTurns=$MaxTurns maxMinutes=$MaxMinutes"
+                exit 0
+            }
+
+            $runArgs = @{
+                Objective        = $resolved
+                CodexCommand     = $CodexCommand
+                WorkingDirectory = $WorkingDirectory
+                MaxTurns         = $MaxTurns
+                MaxMinutes       = $MaxMinutes
+                OnEvent          = {
+                    param($r)
+                    Write-Output ("  turn={0} completed={1} status={2} tokens={3}" -f $r.Turn, $r.TurnCompleted, $r.GoalStatus, $r.TokensUsed)
+                }
+            }
+            if ($PSBoundParameters.ContainsKey("TokenBudget")) { $runArgs["TokenBudget"] = $TokenBudget }
+
+            $result = Invoke-CodexGoalRun @runArgs
+            Write-Output "thread=$($result.ThreadId)"
+            Write-Output "finalStatus=$($result.FinalStatus) stopReason=$($result.StopReason) turns=$($result.Turns.Count)"
+            if ($result.Goal) { $result.Goal | ConvertTo-Json -Depth 6 }
             exit 0
         }
     }

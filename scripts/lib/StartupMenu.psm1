@@ -177,6 +177,14 @@ function Get-MenuItems {
         Action  = 'github-pr-flow'
         Enabled = $true
     })
+    $items.Add([pscustomobject]@{
+        Key     = '14'
+        Label   = "Goal 管理"
+        Note    = "Goal Router 判定 / Codex Goal 一覧 / テンプレートから Goal 設定"
+        Section = $null
+        Action  = 'goal-management'
+        Enabled = $true
+    })
 
     # --- 終了 ---
     $items.Add([pscustomobject]@{
@@ -380,6 +388,9 @@ function Invoke-MenuAction {
         }
         'github-pr-flow' {
             Invoke-GitHubPrFlowAction -ProjectRoot $ProjectRoot
+        }
+        'goal-management' {
+            Invoke-GoalManagementAction -ProjectRoot $ProjectRoot
         }
         'exit' {
             return $false
@@ -701,9 +712,111 @@ function Invoke-MessageBusAction {
     Wait-MenuInput
 }
 
-function Invoke-ReleaseCheckAction {
+function Invoke-GoalManagementAction {
+    <#
+    .SYNOPSIS
+        Goal Router の判定表示、Codex ネイティブ Goal の一覧、テンプレートからの Goal 設定を行う。
+    .DESCRIPTION
+        Router 判定は -NoPersist -SkipGitHub -SkipRuntime で実行し、
+        メニュー操作だけで state.json を書き換えたりネットワークを使ったりしない。
+    #>
     param([string]$ProjectRoot)
+
     Write-Host ""
+    try {
+        # --- 1) Goal Router 判定 (読み取りのみ) ---
+        $routerPath = Join-Path $ProjectRoot "scripts/lib/GoalRouter.psm1"
+        if (Test-Path $routerPath) {
+            Import-Module $routerPath -Force
+            Write-Host "  [Goal Router] Evidence から Goal を判定します..." -ForegroundColor Cyan
+            $route = Resolve-GoalRouter -ProjectDir $ProjectRoot -NoPersist -SkipGitHub -SkipRuntime
+
+            Write-Host ("    primary       = {0} ({1})" -f $route.Primary, (Get-GoalRouterLabelJa -Goal $route.Primary))
+            Write-Host ("    specialized   = {0}" -f $(if ($route.Specialized) { $route.Specialized } else { "none" }))
+            Write-Host ("    effective     = {0}" -f $route.Effective)
+            Write-Host ("    confidence    = {0}" -f $route.Confidence)
+            Write-Host ("    transition    = {0}" -f $route.Transition)
+            Write-Host ("    reason        = {0}" -f $route.Reason)
+            Write-Host ("    evidence      = {0}" -f (($route.EvidenceUsed) -join ", "))
+            Write-Host "    (dry-run: state.json は更新していません)" -ForegroundColor DarkGray
+            Write-Host ""
+        }
+        else {
+            Write-Host "  [WARN] GoalRouter.psm1 が見つかりません: $routerPath" -ForegroundColor Yellow
+        }
+
+        # --- 2) 現在の Goal 一覧 ---
+        $clientPath = Join-Path $ProjectRoot "scripts/lib/CodexGoalClient.psm1"
+        if (Test-Path $clientPath) {
+            Import-Module $clientPath -Force
+            $list = Get-CodexGoalList
+            if ($list.Available) {
+                if ($list.Goals.Count -eq 0) {
+                    Write-Host "  [Goals] 現在 Goal はありません。" -ForegroundColor Cyan
+                }
+                else {
+                    Write-Host ("  [Goals] {0} 件 ({1})" -f $list.Goals.Count, $list.DatabasePath) -ForegroundColor Cyan
+                    foreach ($g in $list.Goals) {
+                        $obj = if ($g.Objective.Length -gt 50) { $g.Objective.Substring(0, 50) + "..." } else { $g.Objective }
+                        Write-Host ("    {0}  {1,-14} tokens={2,-8} {3}" -f $g.ThreadId, $g.Status, $g.TokensUsed, $obj)
+                    }
+                }
+            }
+            else {
+                Write-Host ("  [Goals] 一覧を取得できません: {0}" -f $list.Reason) -ForegroundColor Yellow
+            }
+        }
+        Write-Host ""
+
+        # --- 3) テンプレートから Goal を設定 (明示選択時のみ) ---
+        if (-not (Test-Path $clientPath)) { return }
+        $types = @(Get-GoalRouterPrimaryGoals) + @(Get-GoalRouterSpecializedGoals)
+        Write-Host "  Goal テンプレート:" -ForegroundColor Cyan
+        for ($i = 0; $i -lt $types.Count; $i++) {
+            Write-Host ("    {0,2}. {1,-20} {2}" -f ($i + 1), $types[$i], (Get-GoalRouterLabelJa -Goal $types[$i]))
+        }
+        Write-Host ""
+
+        $answer = Read-Host "  Goal を設定する番号 (Enter でスキップ)"
+        if ([string]::IsNullOrWhiteSpace($answer)) { return }
+
+        $index = 0
+        if (-not [int]::TryParse($answer.Trim(), [ref]$index) -or $index -lt 1 -or $index -gt $types.Count) {
+            Write-Host "  [ERROR] 番号が不正です。" -ForegroundColor Red
+            return
+        }
+
+        $goalType = $types[$index - 1]
+        $templatePath = Get-GoalTemplatePath -ProjectDir $ProjectRoot -GoalType $goalType
+        if (-not $templatePath) {
+            Write-Host "  [ERROR] テンプレートが見つかりません: $goalType" -ForegroundColor Red
+            return
+        }
+
+        Write-Host ""
+        Write-Host ("  {0} の Goal を新規スレッドへ設定します。" -f $goalType) -ForegroundColor Yellow
+        Write-Host "  実行する場合のみ yes を入力してください。" -ForegroundColor Yellow
+        $confirm = Read-Host "  実行しますか? (yes/no)"
+        if ($confirm -ne "yes") {
+            Write-Host "  中止しました。" -ForegroundColor DarkGray
+            return
+        }
+
+        $cliPath = Join-Path $ProjectRoot "scripts/main/Invoke-CodexGoal.ps1"
+        & pwsh -NoProfile -File $cliPath -Action start -Template $templatePath -WorkingDirectory $ProjectRoot
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [WARN] Goal 設定に失敗しました (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  [ERROR] Goal 管理エラー: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+    Wait-MenuInput
+}
+
+function Invoke-ReleaseCheckAction {
+    param([string]$ProjectRoot)    Write-Host ""
     try {
         $scriptPath = Join-Path $ProjectRoot "scripts/main/Invoke-ReleaseCheck.ps1"
         if (-not (Test-Path $scriptPath)) {
@@ -1409,6 +1522,7 @@ Export-ModuleMember -Function @(
     'Read-ProjectCandidateManagementInput',
     'Read-SupervisorProjectSelection',
     'Invoke-GitHubPrFlowAction',
+    'Invoke-GoalManagementAction',
     'Invoke-SupervisorReportAction',
     'Invoke-ReleaseCheckAction',
     'Select-ProjectInteractive'

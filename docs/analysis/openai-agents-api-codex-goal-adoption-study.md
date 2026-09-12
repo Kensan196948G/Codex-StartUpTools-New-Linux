@@ -503,12 +503,81 @@ git fetch --all --prune && git rev-list --left-right --count HEAD...origin/main 
 
 ### 12.6 残課題
 
-1. **Goal Router（レーンB）未着手。** どの Goal を選ぶかの自動決定が依然として最大のギャップ。
-2. **`Start-CodexGoalRun` はスレッドを登録するが駆動しない。** Goal の自動継続はスレッドが
-   app-server にロードされている間だけ働く。継続には `codex resume <threadId>` での接続か
-   セッション保持が必要（CLI は終了時にこの案内を表示する）。
-3. **メニュー統合（A3）未着手。** Goal 管理（active/blocked 一覧・pause/resume/clear）は
-   CLI からのみ可能。`StartupMenu.psm1` への組み込みは次段階。
-4. **レーンC（OpenAI Agents API / Managed Plane）未着手。** データ所在・ZDR は承認済み。
+> **2026-09-12 追補: 1〜4 は実装済み。詳細は §13。**
+
+1. ~~Goal Router（レーンB）未着手~~ → ✅ §13.2
+2. ~~`Start-CodexGoalRun` はスレッドを登録するが駆動しない~~ → ✅ §13.1
+3. ~~メニュー統合（A3）未着手~~ → ✅ §13.3
+4. ~~レーンC（OpenAI Agents API / Managed Plane）未着手~~ → ✅ §13.4（dry-run 契約まで）
 5. `codex doctor` が `rollout files are missing from the state DB`（996 ファイル / 987 行）を
    警告する。**本件の更新とは無関係の既存のデータ衛生問題**であり、本作業では触れていない。
+
+---
+
+## 🧭 13. 追補（2026-09-12）: レーンB / セッション駆動 / メニュー / レーンC
+
+### 13.1 app-server は Goal を自動継続しない（実測）→ 外部駆動を実装
+
+`thread/goal/set` → `turn/start` を 100 秒観測した結果、`turn/started` / `thread/goal/updated`
+（status=active, tokens=7997）/ `turn/completed` は届くが、**継続 turn は来なかった**。
+app-server 単体では Goal は回らず、TUI 側の idle 継続に依存している。
+
+→ `Invoke-CodexGoalRun` を実装。**同一 app-server セッションを保持したまま**
+`turn/start` → `turn/completed` 待ち → `thread/goal/get` で status 確認 → 継続 turn 送出
+をループし、終端 status（complete / blocked / usageLimited / budgetLimited）または
+`MaxTurns` / `MaxMinutes` / turn タイムアウトで停止する。
+継続プロンプトは Codex ネイティブの継続指示と同じ規律を外部から与える。
+
+**実機検証**: 1 ターンで `finalStatus=complete` / `stopReason=goal-complete`。
+モデルの `update_goal status=complete` を検出して停止した。
+
+### 13.2 Goal Router（レーンB）— 移植完了
+
+`scripts/lib/GoalRouter.psm1`（17 関数）+ `config/goals/*.md`（11 本）+ 58 テスト。
+
+- Primary 5 / Specialized 6 の分類・許可関係、13 段階の優先順位ルーティング
+- Evidence 収集（state.json / git / CI / gh / runtime / intent）は `Get-GoalRouterEvidence` に閉じ込め、
+  `Invoke-GoalRouterRoute` は**純粋関数**のまま（テスト容易性を Claude 側から継承）
+- session lock（既定 720 分）と reroute 条件、fail-safe（必ず 1 つの Goal を返す）
+- `state.json` の `goal_router` ブロックへ原子的永続化（一時ファイル + 置換、他キー不変）
+- テンプレートは Router の `effective` から解決し、`Invoke-CodexGoalRun` へ渡す
+
+**検証**: 15 のルーティング規則が Claude 参照実装と一致することをスモークで確認。
+11 テンプレートすべてが 4,000 字以内で objective を抽出できることを機械検証（1,067〜1,409 字）。
+
+### 13.3 メニュー統合（A3）
+
+`StartupMenu.psm1` に `14. Goal 管理`。Router 判定は `-NoPersist -SkipGitHub -SkipRuntime` で
+表示のみ（メニュー操作で state.json を書き換えず、ネットワークも使わない）。
+Goal 一覧（`Get-CodexGoalList` — goals DB を python3/sqlite3 で読み取り専用参照）と、
+11 テンプレートからの選択 + `yes` 確認つき Goal 設定。
+
+### 13.4 レーンC（Agents API）— dry-run 契約まで
+
+`scripts/lib/AgentsApiPayload.psm1` + `config/agents-api.json.template` + 33 テスト。
+
+**重要な訂正**: **OpenAI Agents API には session budget フィールドが存在しない。**
+公式doc（overview / architecture / multi-agent / configuration / observability）に
+Anthropic 版 `max_list_cost` に相当する記載が無い。したがって「budget 必須」を API に
+渡す形では実装できないため、予算統制は **localCostGuard（人間承認 + 見積上限）** という
+ローカルゲートとして実装した。live は次の 4 条件が揃うまで fail-safe で拒否する:
+`enabled` / `mode=live` / `localCostGuard.approvalId` / `dataResidency.approved`。
+
+payload は公式の curl 例と同型であることを実測確認（推測フィールドを足していない）。
+`maxEstimatedUsd` による自動停止は**未実装**（コスト実測手段が未確立のため記録項目に留める）。
+
+### 13.5 追補分の検証結果
+
+| 種別 | 結果 |
+|---|---|
+| Pester 全件 | **394 passed / 0 failed / 1 skipped**（追補前 289） |
+| ArchitectureCheck | CheckedFiles 55 / TotalViolations 0 |
+| 実機ドライバ | 1 ターンで complete 検出 |
+| 後始末 | 検証用 Goal はすべて削除済み（goals DB 0 行）、残留 app-server プロセス 0 |
+
+### 13.6 次段階
+
+1. `maxEstimatedUsd` による実コスト停止（Observability / Usage API との接続が必要）
+2. `self_hosted` executor の接続実装と Webhook Gateway（Supervisor 統合）
+3. 障害調査エージェント PoC の live 実行（課金承認後）
+4. レーンA の残り（A4 blocked 通知 / A5 ダッシュボード表示 / A6 hooks 連携）

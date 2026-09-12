@@ -264,4 +264,194 @@ InModuleScope CodexGoalClient {
             }
         }
     }
+
+    Describe "Get-CodexGoalTerminalStatuses" {
+        It "complete / blocked / usageLimited / budgetLimited を終端とする" {
+            $t = Get-CodexGoalTerminalStatuses
+            $t | Should -Contain "complete"
+            $t | Should -Contain "blocked"
+            $t | Should -Contain "usageLimited"
+            $t | Should -Contain "budgetLimited"
+        }
+
+        It "active / paused は終端ではない" {
+            $t = Get-CodexGoalTerminalStatuses
+            $t | Should -Not -Contain "active"
+            $t | Should -Not -Contain "paused"
+        }
+    }
+
+    Describe "Get-CodexGoalContinuationPrompt" {
+        It "objective を埋め込み、拡大解釈を防ぐタグで囲む" {
+            $p = Get-CodexGoalContinuationPrompt -Objective "テストを通す"
+            $p | Should -Match "<objective>"
+            $p | Should -Match "テストを通す"
+        }
+
+        It "Codex ネイティブ継続と同じ規律を含む" {
+            $p = Get-CodexGoalContinuationPrompt -Objective "o"
+            $p | Should -Match "Keep the full objective intact"
+            $p | Should -Match "Work from evidence"
+            $p | Should -Match "update_goal"
+            $p | Should -Match "three consecutive goal turns"
+        }
+    }
+
+    Describe "Wait-CodexGoalTurnCompleted" {
+        It "turn/completed で抜け、goal status を拾う" {
+            $script:queue = @(
+                '{"method":"turn/started","params":{}}'
+                '{"method":"thread/goal/updated","params":{"goal":{"status":"active","tokensUsed":100}}}'
+                '{"method":"turn/completed","params":{}}'
+            )
+            $script:idx = 0
+            Mock Read-CodexGoalSessionLine -MockWith {
+                if ($script:idx -ge $script:queue.Count) { return $null }
+                $l = $script:queue[$script:idx]; $script:idx++; return $l
+            }
+
+            $r = Wait-CodexGoalTurnCompleted -Session ([pscustomobject]@{}) -TimeoutSec 5
+            $r.TurnCompleted | Should -BeTrue
+            $r.TimedOut | Should -BeFalse
+            $r.GoalStatus | Should -Be "active"
+            $r.Events | Should -Contain "turn/completed"
+        }
+
+        It "id 付き応答行 (通知でない) は無視する" {
+            $script:queue = @(
+                '{"jsonrpc":"2.0","id":9,"result":{}}'
+                '{"method":"turn/completed","params":{}}'
+            )
+            $script:idx = 0
+            Mock Read-CodexGoalSessionLine -MockWith {
+                if ($script:idx -ge $script:queue.Count) { return $null }
+                $l = $script:queue[$script:idx]; $script:idx++; return $l
+            }
+
+            (Wait-CodexGoalTurnCompleted -Session ([pscustomobject]@{}) -TimeoutSec 5).TurnCompleted | Should -BeTrue
+        }
+
+        It "turn/completed が来なければ TimedOut" {
+            Mock Read-CodexGoalSessionLine -MockWith { return $null }
+            $r = Wait-CodexGoalTurnCompleted -Session ([pscustomobject]@{}) -TimeoutSec 1
+            $r.TurnCompleted | Should -BeFalse
+            $r.TimedOut | Should -BeTrue
+        }
+    }
+
+    Describe "Invoke-CodexGoalRun (session mocked)" {
+        BeforeEach {
+            Mock New-CodexGoalSession -MockWith {
+                [pscustomobject]@{
+                    Process = $null; NextId = 0; Initialized = $true
+                    PendingEvents = (New-Object System.Collections.Generic.List[string])
+                }
+            }
+            Mock Close-CodexGoalSession -MockWith { }
+        }
+
+        It "objective が不正ならセッションを開かない" {
+            Mock Invoke-CodexGoalSessionRpc -MockWith { throw "should not be called" }
+            { Invoke-CodexGoalRun -Objective ("a" * 4001) } | Should -Throw "*objective-too-long*"
+            Should -Invoke New-CodexGoalSession -Times 0
+        }
+
+        It "Goal が complete になったら 1 ターンで終了する" {
+            Mock Invoke-CodexGoalSessionRpc -MockWith {
+                param($Session, $Method, $Parameters, $TimeoutSec)
+                switch ($Method) {
+                    "thread/start" { return [pscustomobject]@{ thread = [pscustomobject]@{ id = "th-1" } } }
+                    "thread/goal/set" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "active" } } }
+                    "turn/start" { return [pscustomobject]@{} }
+                    "thread/goal/get" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "complete"; tokensUsed = 1234 } } }
+                }
+            }
+            Mock Wait-CodexGoalTurnCompleted -MockWith { [pscustomobject]@{ TurnCompleted = $true; TimedOut = $false; GoalStatus = "active"; Goal = $null; Events = @() } }
+
+            $r = Invoke-CodexGoalRun -Objective "テスト" -WorkingDirectory "/tmp"
+            $r.ThreadId | Should -Be "th-1"
+            $r.FinalStatus | Should -Be "complete"
+            $r.StopReason | Should -Be "goal-complete"
+            $r.Turns.Count | Should -Be 1
+            Should -Invoke Close-CodexGoalSession -Times 1
+        }
+
+        It "2 ターン目は継続プロンプトを送る" {
+            $script:turns = @()
+            $script:goalGets = 0
+            Mock Invoke-CodexGoalSessionRpc -MockWith {
+                param($Session, $Method, $Parameters, $TimeoutSec)
+                switch ($Method) {
+                    "thread/start" { return [pscustomobject]@{ thread = [pscustomobject]@{ id = "th-2" } } }
+                    "thread/goal/set" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "active" } } }
+                    "turn/start" { $script:turns += $Parameters.input[0].text; return [pscustomobject]@{} }
+                    "thread/goal/get" {
+                        $script:goalGets++
+                        $st = if ($script:goalGets -ge 2) { "complete" } else { "active" }
+                        return [pscustomobject]@{ goal = [pscustomobject]@{ status = $st } }
+                    }
+                }
+            }
+            Mock Wait-CodexGoalTurnCompleted -MockWith { [pscustomobject]@{ TurnCompleted = $true; TimedOut = $false; GoalStatus = "active"; Goal = $null; Events = @() } }
+
+            $r = Invoke-CodexGoalRun -Objective "OBJECTIVE-X" -WorkingDirectory "/tmp" -MaxTurns 5
+            $r.Turns.Count | Should -Be 2
+            $script:turns[0] | Should -Be "OBJECTIVE-X"
+            $script:turns[1] | Should -Match "Continue working toward the active thread goal"
+        }
+
+        It "MaxTurns に達したら max-turns で止まる" {
+            Mock Invoke-CodexGoalSessionRpc -MockWith {
+                param($Session, $Method, $Parameters, $TimeoutSec)
+                switch ($Method) {
+                    "thread/start" { return [pscustomobject]@{ thread = [pscustomobject]@{ id = "th-3" } } }
+                    "thread/goal/set" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "active" } } }
+                    "turn/start" { return [pscustomobject]@{} }
+                    "thread/goal/get" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "active" } } }
+                }
+            }
+            Mock Wait-CodexGoalTurnCompleted -MockWith { [pscustomobject]@{ TurnCompleted = $true; TimedOut = $false; GoalStatus = "active"; Goal = $null; Events = @() } }
+
+            $r = Invoke-CodexGoalRun -Objective "o" -WorkingDirectory "/tmp" -MaxTurns 3
+            $r.Turns.Count | Should -Be 3
+            $r.StopReason | Should -Be "max-turns"
+            $r.FinalStatus | Should -Be "active"
+        }
+
+        It "blocked も終端として扱う" {
+            Mock Invoke-CodexGoalSessionRpc -MockWith {
+                param($Session, $Method, $Parameters, $TimeoutSec)
+                switch ($Method) {
+                    "thread/start" { return [pscustomobject]@{ thread = [pscustomobject]@{ id = "th-4" } } }
+                    "thread/goal/set" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "active" } } }
+                    "turn/start" { return [pscustomobject]@{} }
+                    "thread/goal/get" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "blocked" } } }
+                }
+            }
+            Mock Wait-CodexGoalTurnCompleted -MockWith { [pscustomobject]@{ TurnCompleted = $true; TimedOut = $false; GoalStatus = "blocked"; Goal = $null; Events = @() } }
+
+            $r = Invoke-CodexGoalRun -Objective "o" -WorkingDirectory "/tmp"
+            $r.FinalStatus | Should -Be "blocked"
+            $r.StopReason | Should -Be "goal-blocked"
+            $r.Turns.Count | Should -Be 1
+        }
+
+        It "例外が出てもセッションを必ず閉じる" {
+            Mock Invoke-CodexGoalSessionRpc -MockWith { throw "rpc boom" }
+            { Invoke-CodexGoalRun -Objective "o" -WorkingDirectory "/tmp" } | Should -Throw "*rpc boom*"
+            Should -Invoke Close-CodexGoalSession -Times 1
+        }
+    }
+
+    Describe "Read-CodexGoalSessionLine" {
+        It "バッファがあればバッファを先に返す" {
+            $session = [pscustomobject]@{
+                Process       = $null
+                PendingEvents = New-Object System.Collections.Generic.List[string]
+            }
+            $session.PendingEvents.Add('{"method":"buffered"}')
+            (Read-CodexGoalSessionLine -Session $session -TimeoutSec 1) | Should -Be '{"method":"buffered"}'
+            $session.PendingEvents.Count | Should -Be 0
+        }
+    }
 }
