@@ -135,10 +135,16 @@ function Invoke-ReleasePesterCheck {
     )
 
     $testPath = Join-Path $ProjectRoot "tests/unit"
+    if (-not (Test-Path -LiteralPath $testPath -PathType Container)) {
+        return New-ReleaseCheckResult -Name "Pester unit tests" -Ok $false -Detail "tests/unit not found" -Category "test"
+    }
+
+    $escapedTestPath = $testPath.Replace("'", "''")
     $command = @"
+`$ErrorActionPreference = 'Stop'
 Import-Module Pester -MinimumVersion 5.0 -Force
-`$result = Invoke-Pester -Path '$testPath' -Output Normal -PassThru
-if (`$result.FailedCount -gt 0) { exit 1 }
+`$result = Invoke-Pester -Path '$escapedTestPath' -Output Normal -PassThru
+if (`$null -eq `$result -or `$result.Result -ne 'Passed' -or `$result.PassedCount -eq 0) { exit 1 }
 exit 0
 "@
 

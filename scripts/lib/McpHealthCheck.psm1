@@ -22,33 +22,93 @@ function Test-McpCommandExists {
     return [bool](Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
+function Test-McpProcessGroupOwnership {
+    param([System.Diagnostics.Process]$Process)
+
+    if ($Process.HasExited -or $Process.Id -le 1) { return $false }
+    $stat = Get-Content -LiteralPath "/proc/$($Process.Id)/stat" -Raw -ErrorAction Stop
+    $match = [regex]::Match($stat, '^\d+ \(.*\) \S+ \d+ (?<group>\d+) (?<session>\d+) ')
+    return ($match.Success -and $match.Groups['group'].Value -eq "$($Process.Id)" -and $match.Groups['session'].Value -eq "$($Process.Id)")
+}
+
 function Invoke-McpProcessWithTimeout {
     param(
         [string]$Command,
         [string[]]$Arguments = @(),
+        [ValidateRange(1, 2147483)]
         [int]$TimeoutSec = 5
     )
 
-    $stdoutPath = Join-Path $env:TEMP ("codex-startup-mcp-" + [guid]::NewGuid().ToString() + ".out")
-    $stderrPath = Join-Path $env:TEMP ("codex-startup-mcp-" + [guid]::NewGuid().ToString() + ".err")
     $process = $null
+    $started = $false
+    $groupOwned = $false
 
     try {
         $resolved = Get-Command $Command -ErrorAction Stop
         $filePath = if ($resolved.Source) { $resolved.Source } else { $Command }
-        $process = Start-Process -FilePath $filePath -ArgumentList (ConvertTo-McpProcessArgumentString -Arguments $Arguments) -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-
-        if ($process.WaitForExit($TimeoutSec * 1000)) {
-            $stdout = if (Test-Path $stdoutPath) { Get-Content -Path $stdoutPath -Raw -Encoding UTF8 } else { "" }
-            $stderr = if (Test-Path $stderrPath) { Get-Content -Path $stderrPath -Raw -Encoding UTF8 } else { "" }
+        $sessionCommand = Get-Command setsid -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $shellCommand = Get-Command sh -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $killCommand = Get-Command kill -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        # leader を回収まで保持し、終了した検査の子も同じグループで回収する。
+        $wrapper = @'
+printf '%s\n' "$$"
+IFS= read -r request || exit 125
+[ "$request" = start ] || exit 125
+"$@" &
+child=$!
+wait "$child"
+status=$?
+exec 1>&- 2>&-
+IFS= read -r request
+exit "$status"
+'@
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo.FileName = $sessionCommand.Source
+        $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.CreateNoWindow = $true
+        $process.StartInfo.RedirectStandardOutput = $true
+        $process.StartInfo.RedirectStandardError = $true
+        $process.StartInfo.RedirectStandardInput = $true
+        $process.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $process.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+        foreach ($argument in @('--', $shellCommand.Source, '-c', $wrapper, 'mcp-health', $filePath) + $Arguments) {
+            $process.StartInfo.ArgumentList.Add($argument)
+        }
+        $timer = [System.Diagnostics.Stopwatch]::StartNew()
+        [void]$process.Start()
+        $started = $true
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $remainingMilliseconds = {
+            [int][math]::Min([int]::MaxValue, [math]::Max(0, ($TimeoutSec * 1000.0) - $timer.Elapsed.TotalMilliseconds))
+        }
+        $handshake = $process.StandardOutput.ReadLineAsync()
+        $outputCompleted = $false
+        $exited = $false
+        if ($handshake.Wait((& $remainingMilliseconds))) {
+            if ($handshake.Result -ne "$($process.Id)" -or -not (Test-McpProcessGroupOwnership -Process $process)) {
+                throw 'MCP health process group ownership could not be verified'
+            }
+            $groupOwned = $true
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $process.StandardInput.WriteLine('start')
+            $process.StandardInput.Flush()
+            # 両方のパイプを並行して読み、秘密を含み得る出力をディスクへ保存しない。
+            $outputCompleted = [System.Threading.Tasks.Task]::WaitAll(
+                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask), (& $remainingMilliseconds))
+            if ($outputCompleted) {
+                $process.StandardInput.WriteLine('finish')
+                $process.StandardInput.Close()
+                $exited = $process.WaitForExit((& $remainingMilliseconds))
+            }
+        }
+        if ($exited -and $outputCompleted) {
             return [pscustomobject]@{
                 TimedOut = $false
                 ExitCode = $process.ExitCode
-                Output   = ($stdout + $stderr).Trim()
+                Output   = ($stdoutTask.Result + $stderrTask.Result).Trim()
             }
         }
 
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         return [pscustomobject]@{
             TimedOut = $true
             ExitCode = -1
@@ -56,8 +116,20 @@ function Invoke-McpProcessWithTimeout {
         }
     }
     finally {
-        foreach ($path in @($stdoutPath, $stderrPath)) {
-            Remove-Item $path -Force -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            try {
+                if ($started -and -not $process.HasExited) {
+                    if ($groupOwned -and (Test-McpProcessGroupOwnership -Process $process)) {
+                        & $killCommand.Source -KILL -- "-$($process.Id)" 2>$null
+                        if ($LASTEXITCODE -ne 0) { throw 'MCP health process group cleanup failed' }
+                    }
+                    else {
+                        $process.Kill($true)
+                    }
+                    [void]$process.WaitForExit(5000)
+                }
+            }
+            finally { $process.Dispose() }
         }
     }
 }

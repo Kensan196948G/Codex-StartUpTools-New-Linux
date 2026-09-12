@@ -78,6 +78,11 @@ Expected:
 - statusLine extraction behavior remains verified
 - session metadata persistence behavior remains verified
 - launcher path and SSH-drive resolution behavior remains verified
-- MCP argument escaping behavior remains verified
+- MCP ヘルスチェックは `.NET ProcessStartInfo.ArgumentList` で引数境界を保持する。
+  `TEMP` 未設定でも実行でき、stdout / stderr は並行してメモリへ読み取り、一時ファイルへ保存しない。
+  Linux の `setsid` / `sh` / 外部 `kill` / `/proc` で検査専用グループを作り、所有確認後に実行する。
+  タイムアウト時は親終了後に残った子も専用グループごと回収する。必要なコマンドがない場合は実行前に拒否する。
+  成功・失敗の終了コード、空文字・空白・引用符・末尾バックスラッシュの引数、大量出力、
+  子プロセスを伴うタイムアウトを Linux の実プロセステストで確認する。
 - reduced state example remains compatible with `TokenBudget` and `MessageBus`
 - bootstrap and Codex entrypoint scripts remain dry-run and local-launch verifiable

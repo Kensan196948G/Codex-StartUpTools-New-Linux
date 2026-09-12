@@ -26,6 +26,26 @@ BeforeAll {
     }
 }
 
+Describe "Start-SessionLog" {
+    It "TEMP 未設定でも利用できないログ先から一時ディレクトリへ退避する" {
+        $originalTemp = $env:TEMP
+        $unavailable = Join-Path $TestDrive "file-not-directory"
+        "occupied" | Set-Content $unavailable
+        Mock Start-Transcript -ModuleName LogManager { }
+        Mock Stop-Transcript -ModuleName LogManager { }
+        try {
+            Remove-Item Env:TEMP -ErrorAction SilentlyContinue
+            $result = Start-SessionLog -Config (New-TestLogConfig -LogDir $unavailable) -ProjectName "fallback"
+            [System.IO.Path]::GetDirectoryName($result.LogPath) | Should -Be ([System.IO.Path]::GetTempPath().TrimEnd('/'))
+            Should -Invoke Start-Transcript -ModuleName LogManager -Times 1
+        }
+        finally {
+            Stop-SessionLog -Success $true
+            $env:TEMP = $originalTemp
+        }
+    }
+}
+
 Describe "Get-LogSummary" {
     It "空ディレクトリでは 0 件を返す" {
         $logDir = Join-Path $TestDrive "empty-logs"

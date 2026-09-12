@@ -118,7 +118,7 @@ function Get-BootstrapPreflightChecks {
         [object]$Config
     )
 
-    $gitRoot = git rev-parse --show-toplevel 2>$null
+    $gitRoot = git -C $script:StartupRoot rev-parse --show-toplevel 2>$null
     $toolCommand = "$($Config.tools.codex.command)"
     $toolAvailable = [bool](Get-Command $toolCommand -ErrorAction SilentlyContinue)
     $workflowPath = Join-Path $script:StartupRoot ".github/workflows"
@@ -377,9 +377,15 @@ try {
         elseif ($configResult.Exists) { "Cyan" }
         else { "Yellow" }
     )
-    $config = Import-LauncherConfig -ConfigPath $configPath
-    Start-SessionLog -Config $config -ProjectName (Get-BootstrapLogProjectName) -ToolName "codex-bootstrap" | Out-Null
-    Assert-StartupConfigSchema -ConfigPath $configPath | Out-Null
+    $configSourcePath = $configPath
+    if ($DryRun -and -not $configResult.Exists) {
+        $configSourcePath = Join-Path (Split-Path $configPath -Parent) "config.json.template"
+    }
+    $config = Import-LauncherConfig -ConfigPath $configSourcePath
+    if (-not $DryRun) {
+        Start-SessionLog -Config $config -ProjectName (Get-BootstrapLogProjectName) -ToolName "codex-bootstrap" | Out-Null
+    }
+    Assert-StartupConfigSchema -ConfigPath $configSourcePath | Out-Null
 
     if (-not $config.tools.codex.enabled) {
         throw "config.json で tools.codex.enabled が false です。"
@@ -391,7 +397,7 @@ try {
     $executionState = Update-BootstrapExecutionState -StatePath $statePath -PreviewOnly:$DryRun
     $phaseMessageId = Publish-BootstrapPhaseTransition -StatePath $statePath -PreviewOnly:$DryRun
 
-    $checks = Get-BootstrapPreflightChecks -ConfigPath $configPath -StatePath $statePath -Config $config
+    $checks = Get-BootstrapPreflightChecks -ConfigPath $configSourcePath -StatePath $statePath -Config $config
     Write-BootstrapPreflightChecks -Checks $checks
     $readiness = Get-BootstrapReadiness -Checks $checks
     Write-BootstrapReadiness -Readiness $readiness
@@ -424,7 +430,7 @@ catch {
     exit 1
 }
 finally {
-    if ($config) {
+    if ($config -and -not $DryRun) {
         Invoke-LogRotation -Config $config
         Stop-SessionLog -Success:$bootstrapSucceeded
     }

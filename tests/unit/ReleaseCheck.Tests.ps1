@@ -97,6 +97,42 @@ Describe "Test-ReleaseGitState" {
     }
 }
 
+Describe "Invoke-ReleasePesterCheck" {
+    It "テストディレクトリがなければ fail" {
+        (Invoke-ReleasePesterCheck -ProjectRoot $TestDrive).Ok | Should -BeFalse
+    }
+
+    It "テストが空なら fail" {
+        $root = Join-Path $TestDrive "empty"
+        New-Item -ItemType Directory -Path (Join-Path $root "tests/unit") -Force | Out-Null
+        (Invoke-ReleasePesterCheck -ProjectRoot $root).Ok | Should -BeFalse
+    }
+
+    It "discovery が失敗したら fail" {
+        $root = Join-Path $TestDrive "discovery-failure"
+        $testPath = Join-Path $root "tests/unit"
+        New-Item -ItemType Directory -Path $testPath -Force | Out-Null
+        'throw "discovery failed"' | Set-Content (Join-Path $testPath "Failure.Tests.ps1")
+        (Invoke-ReleasePesterCheck -ProjectRoot $root).Ok | Should -BeFalse
+    }
+
+    It "全テストが skipped なら fail" {
+        $root = Join-Path $TestDrive "skipped"
+        $testPath = Join-Path $root "tests/unit"
+        New-Item -ItemType Directory -Path $testPath -Force | Out-Null
+        'Describe "sample" { It "skipped" -Skip { } }' | Set-Content (Join-Path $testPath "Sample.Tests.ps1")
+        (Invoke-ReleasePesterCheck -ProjectRoot $root).Ok | Should -BeFalse
+    }
+
+    It "引用符と空白を含むパスでも成功したテストを確認できる" {
+        $root = Join-Path $TestDrive "project's tests"
+        $testPath = Join-Path $root "tests/unit"
+        New-Item -ItemType Directory -Path $testPath -Force | Out-Null
+        'Describe "sample" { It "passes" { 1 | Should -Be 1 } }' | Set-Content (Join-Path $testPath "Sample.Tests.ps1")
+        (Invoke-ReleasePesterCheck -ProjectRoot $root).Ok | Should -BeTrue
+    }
+}
+
 Describe "Invoke-ReleaseCheck" {
     It "軽量チェックの集約結果を返す" {
         "config/config.json`nstate.json`nlogs/" | Set-Content -Path (Join-Path $TestDrive ".gitignore") -Encoding UTF8
