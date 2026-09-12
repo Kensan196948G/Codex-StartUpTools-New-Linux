@@ -27,3 +27,9 @@ config/backups/
 
 # Recent projects history (per-user)
 .codex-startup/
+
+# Python test artifacts (tests/python)
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
