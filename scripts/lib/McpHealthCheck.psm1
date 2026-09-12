@@ -42,6 +42,7 @@ function Invoke-McpProcessWithTimeout {
     $process = $null
     $started = $false
     $groupOwned = $false
+    $maxOutputChars = 1048576
 
     try {
         $resolved = Get-Command $Command -ErrorAction Stop
@@ -77,24 +78,61 @@ exit "$status"
         $timer = [System.Diagnostics.Stopwatch]::StartNew()
         [void]$process.Start()
         $started = $true
-        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $stderrBuffer = [char[]]::new(4096)
+        $stderrTask = $process.StandardError.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
         $remainingMilliseconds = {
             [int][math]::Min([int]::MaxValue, [math]::Max(0, ($TimeoutSec * 1000.0) - $timer.Elapsed.TotalMilliseconds))
         }
-        $handshake = $process.StandardOutput.ReadLineAsync()
+        # 初期応答も固定長で読み、不正な改行なし出力を保持し続けない。
+        $handshakeBuffer = [char[]]::new(1)
+        $handshakeText = [System.Text.StringBuilder]::new()
+        $handshakeComplete = $false
+        while ($handshakeText.Length -lt 32 -and (& $remainingMilliseconds) -gt 0) {
+            $handshake = $process.StandardOutput.ReadAsync($handshakeBuffer, 0, 1)
+            if (-not $handshake.Wait((& $remainingMilliseconds))) { break }
+            if ($handshake.Result -eq 0) { throw 'MCP health process group ownership could not be verified' }
+            if ($handshakeBuffer[0] -eq "`n") { $handshakeComplete = $true; break }
+            [void]$handshakeText.Append($handshakeBuffer[0])
+        }
+        if ($handshakeText.Length -ge 32) { throw 'MCP health process group ownership could not be verified' }
         $outputCompleted = $false
         $exited = $false
-        if ($handshake.Wait((& $remainingMilliseconds))) {
-            if ($handshake.Result -ne "$($process.Id)" -or -not (Test-McpProcessGroupOwnership -Process $process)) {
+        if ($handshakeComplete) {
+            if ($handshakeText.ToString() -ne "$($process.Id)" -or -not (Test-McpProcessGroupOwnership -Process $process)) {
                 throw 'MCP health process group ownership could not be verified'
             }
             $groupOwned = $true
-            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stdoutBuffer = [char[]]::new(4096)
+            $streams = @(
+                @{ Reader = $process.StandardOutput; Buffer = $stdoutBuffer; Text = [System.Text.StringBuilder]::new(); Task = $process.StandardOutput.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length) },
+                @{ Reader = $process.StandardError; Buffer = $stderrBuffer; Text = [System.Text.StringBuilder]::new(); Task = $stderrTask }
+            )
             $process.StandardInput.WriteLine('start')
             $process.StandardInput.Flush()
-            # 両方のパイプを並行して読み、秘密を含み得る出力をディスクへ保存しない。
-            $outputCompleted = [System.Threading.Tasks.Task]::WaitAll(
-                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask), (& $remainingMilliseconds))
+            # 各ストリームの保留読み取りは1つだけ。合計上限を超えるチャンクは保存しない。
+            $totalChars = 0
+            while ((& $remainingMilliseconds) -gt 0) {
+                $pending = @($streams | Where-Object { $null -ne $_.Task })
+                if ($pending.Count -eq 0) { $outputCompleted = $true; break }
+                $tasks = [System.Threading.Tasks.Task[]]@($pending | ForEach-Object { $_.Task })
+                if ([System.Threading.Tasks.Task]::WaitAny($tasks, (& $remainingMilliseconds)) -lt 0) { break }
+                foreach ($stream in $pending) {
+                    if (-not $stream.Task.IsCompleted) { continue }
+                    $count = $stream.Task.GetAwaiter().GetResult()
+                    if ($count -eq 0) { $stream.Task = $null; continue }
+                    $totalChars += $count
+                    if ($totalChars -gt $maxOutputChars) {
+                        return [pscustomobject]@{
+                            TimedOut = $false
+                            OutputLimitExceeded = $true
+                            ExitCode = -1
+                            Output = "health command output exceeded ${maxOutputChars} characters"
+                        }
+                    }
+                    [void]$stream.Text.Append($stream.Buffer, 0, $count)
+                    $stream.Task = $stream.Reader.ReadAsync($stream.Buffer, 0, $stream.Buffer.Length)
+                }
+            }
             if ($outputCompleted) {
                 $process.StandardInput.WriteLine('finish')
                 $process.StandardInput.Close()
@@ -104,13 +142,15 @@ exit "$status"
         if ($exited -and $outputCompleted) {
             return [pscustomobject]@{
                 TimedOut = $false
+                OutputLimitExceeded = $false
                 ExitCode = $process.ExitCode
-                Output   = ($stdoutTask.Result + $stderrTask.Result).Trim()
+                Output   = ($streams[0].Text.ToString() + $streams[1].Text.ToString()).Trim()
             }
         }
 
         return [pscustomobject]@{
             TimedOut = $true
+            OutputLimitExceeded = $false
             ExitCode = -1
             Output   = "health command timed out after ${TimeoutSec}s"
         }

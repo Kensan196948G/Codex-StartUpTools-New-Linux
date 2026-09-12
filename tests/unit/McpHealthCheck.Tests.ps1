@@ -35,6 +35,76 @@ InModuleScope McpHealthCheck {
             $result.Output.Length | Should -Be 524288
         }
 
+        It "出力合計が上限ちょうどなら切り捨てず成功する" {
+            $result = Invoke-McpProcessWithTimeout -Command /bin/sh -Arguments @('-c', 'head -c 524288 /dev/zero; head -c 524288 /dev/zero >&2')
+            $result.ExitCode | Should -Be 0
+            $result.OutputLimitExceeded | Should -BeFalse
+            $result.Output.Length | Should -Be 1048576
+        }
+
+        It "<Label> の出力超過はタイムアウトではなく失敗として返す" -ForEach @(
+            @{ Label = 'stdout'; Script = 'head -c 1048577 /dev/zero' },
+            @{ Label = 'stderr'; Script = 'head -c 1048577 /dev/zero >&2' },
+            @{ Label = '合計'; Script = 'head -c 524288 /dev/zero; head -c 524289 /dev/zero >&2' }
+        ) {
+            $result = Invoke-McpProcessWithTimeout -Command /bin/sh -Arguments @('-c', $Script)
+            $result.ExitCode | Should -Be -1
+            $result.TimedOut | Should -BeFalse
+            $result.OutputLimitExceeded | Should -BeTrue
+            $result.Output | Should -Be 'health command output exceeded 1048576 characters'
+        }
+
+        It "出力超過時は専用グループの子を回収し無関係なプロセスを残す" {
+            $pidFile = Join-Path $TestDrive 'overflow-child.pid'
+            $childId = $null
+            $unrelated = Start-Process /usr/bin/sleep -ArgumentList 30 -PassThru
+            try {
+                $command = 'sleep 30 & printf "%s" "$!" > "$1"; head -c 1048577 /dev/zero; wait'
+                $result = Invoke-McpProcessWithTimeout -Command /bin/sh -Arguments @('-c', $command, 'health-check', $pidFile)
+                $result.OutputLimitExceeded | Should -BeTrue
+                $unrelated.HasExited | Should -BeFalse
+                $childId = [int](Get-Content -LiteralPath $pidFile -Raw)
+                $statPath = "/proc/$childId/stat"
+                if (Test-Path -LiteralPath $statPath) {
+                    (Get-Content -LiteralPath $statPath -Raw) | Should -Match '^\d+ \(.*\) [ZX] '
+                }
+                else { Get-Process -Id $childId -ErrorAction SilentlyContinue | Should -BeNullOrEmpty }
+            }
+            finally {
+                if ($childId) { Stop-Process -Id $childId -Force -ErrorAction SilentlyContinue }
+                if (-not $unrelated.HasExited) { $unrelated.Kill() }
+                $unrelated.Dispose()
+            }
+        }
+
+        It "出力超過をヘルス結果では unhealthy とし出力を保存しない" {
+            $definition = [pscustomobject]@{
+                command = '/bin/sh'
+                healthCommand = @('/bin/sh', '-c', 'head -c 1048577 /dev/zero')
+            }
+            $result = Get-McpServerHealth -Name 'overflow' -Definition $definition
+            $result.healthStatus | Should -Be 'unhealthy'
+            $result.healthOutput | Should -Be 'health command output exceeded 1048576 characters'
+        }
+
+        It "改行なしの長い初期応答を拒否し検査コマンドを実行しない" {
+            $bin = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'invalid-handshake-bin')
+            $sessionCommand = Join-Path $bin.FullName 'setsid'
+            @'
+#!/bin/sh
+exec /usr/bin/head -c 65536 /dev/zero
+'@ | Set-Content -LiteralPath $sessionCommand -Encoding utf8NoBOM
+            & chmod +x $sessionCommand
+            $marker = Join-Path $TestDrive 'not-created-invalid-handshake'
+            $previousPath = $env:PATH
+            try {
+                $env:PATH = $bin.FullName + [System.IO.Path]::PathSeparator + $previousPath
+                { Invoke-McpProcessWithTimeout -Command /usr/bin/touch -Arguments @($marker) } | Should -Throw '*ownership could not be verified*'
+            }
+            finally { $env:PATH = $previousPath }
+            Test-Path $marker | Should -BeFalse
+        }
+
         It "タイムアウト時に子プロセスも終了する（親終了=<ParentExits>）" -ForEach @(
             @{ ParentExits = $false; ParentAction = 'wait' },
             @{ ParentExits = $true; ParentAction = 'exit 0' }

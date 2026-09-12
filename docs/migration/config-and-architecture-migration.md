@@ -80,8 +80,13 @@ Expected:
 - launcher path and SSH-drive resolution behavior remains verified
 - MCP ヘルスチェックは `.NET ProcessStartInfo.ArgumentList` で引数境界を保持する。
   `TEMP` 未設定でも実行でき、stdout / stderr は並行してメモリへ読み取り、一時ファイルへ保存しない。
+  保持上限は両ストリーム合計1,048,576文字（UTF-16コード単位）。上限ちょうどは保持し、
+  超過チャンクは保存せず、部分出力の代わりに固定エラー文、ExitCode=-1、OutputLimitExceeded=true を返す。
+  超過はタイムアウトと区別し、Get-McpServerHealth は unhealthy と判定する。初期応答も32文字未満に制限する。
   Linux の `setsid` / `sh` / 外部 `kill` / `/proc` で検査専用グループを作り、所有確認後に実行する。
-  タイムアウト時は親終了後に残った子も専用グループごと回収する。必要なコマンドがない場合は実行前に拒否する。
+  タイムアウト・出力超過時は親終了後に残った子も専用グループごと回収する。
+  別セッションへ離脱した子と、出力を閉じて正常終了したコマンドが残すバックグラウンドプロセスは対象外。
+  必要なコマンドがない場合は実行前に拒否する。
   成功・失敗の終了コード、空文字・空白・引用符・末尾バックスラッシュの引数、大量出力、
   子プロセスを伴うタイムアウトを Linux の実プロセステストで確認する。
 - reduced state example remains compatible with `TokenBudget` and `MessageBus`
