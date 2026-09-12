@@ -92,7 +92,7 @@ function Update-RecentProject {
     $projects = [System.Collections.Generic.List[object]]::new()
     $existing = Get-RecentProject -HistoryPath $HistoryPath
     foreach ($project in $existing) {
-        $sameProject = ($project.project -eq $ProjectName)
+        $sameProject = ($project.project -ceq $ProjectName)
         $sameTool = (([string]::IsNullOrWhiteSpace($Tool) -and [string]::IsNullOrWhiteSpace($project.tool)) -or ($project.tool -eq $Tool))
         $sameMode = (([string]::IsNullOrWhiteSpace($Mode) -and [string]::IsNullOrWhiteSpace($project.mode)) -or ($project.mode -eq $Mode))
         if (-not ($sameProject -and $sameTool -and $sameMode)) {

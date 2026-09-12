@@ -315,6 +315,10 @@ Describe "Recent project restart helpers" {
 }
 
 Describe "Read-SupervisorProjectSelection" {
+    It "同名でも選択パスを重複排除しない" {
+        $candidates = @([pscustomobject]@{name='Same';path='/internal/Same'}, [pscustomobject]@{name='Same';path='/external/Same'})
+        @(Read-SupervisorProjectSelection -Candidates $candidates -InputText '1,2,1') | Should -Be @('/internal/Same', '/external/Same')
+    }
     BeforeEach {
         $script:SupervisorCandidates = @(
             [pscustomobject]@{ name = "Alpha"; path = "/tmp/Alpha" },
@@ -323,18 +327,94 @@ Describe "Read-SupervisorProjectSelection" {
         )
     }
 
-    It "カンマ区切り番号をプロジェクト名に変換する" {
+    It "カンマ区切り番号をプロジェクトパスに変換する" {
         $result = @(Read-SupervisorProjectSelection -Candidates $script:SupervisorCandidates -InputText "1,3")
-        $result | Should -Be @("Alpha", "Gamma")
+        $result | Should -Be @("/tmp/Alpha", "/tmp/Gamma")
     }
 
     It "all を指定すると全候補を返す" {
         $result = @(Read-SupervisorProjectSelection -Candidates $script:SupervisorCandidates -InputText "all")
-        $result | Should -Be @("Alpha", "Beta", "Gamma")
+        $result | Should -Be @("/tmp/Alpha", "/tmp/Beta", "/tmp/Gamma")
     }
 
     It "0 はキャンセルとして空配列を返す" {
         @(Read-SupervisorProjectSelection -Candidates $script:SupervisorCandidates -InputText "0").Count | Should -Be 0
+    }
+}
+
+Describe "起動候補のパス識別" {
+    BeforeEach {
+        $script:IdentityRoots = @((Join-Path $TestDrive 'internal'), (Join-Path $TestDrive 'external'))
+        foreach ($root in $script:IdentityRoots) { New-Item -ItemType Directory -Path (Join-Path $root 'Same') -Force | Out-Null }
+        $script:IdentityConfig = New-TestConfig -ProjectsDir $script:IdentityRoots[0]
+        $script:IdentityConfig.registeredProjects.roots = $script:IdentityRoots
+        $script:IdentityConfig.recentProjects.historyFile = Join-Path $TestDrive ("identity-history-{0}.json" -f [guid]::NewGuid())
+        Mock Read-Host -ModuleName StartupMenu { '2' }
+    }
+
+    It "登録された2ルートの同名候補から2番目のパスを返す" {
+        Select-ProjectInteractive -Config $script:IdentityConfig | Should -Be (Join-Path $script:IdentityRoots[1] 'Same')
+    }
+
+    It "同名の直接入力は先頭rootへ解決せず拒否する" {
+        Mock Read-Host -ModuleName StartupMenu { 'Same' }
+        { Select-ProjectInteractive -Config $script:IdentityConfig } | Should -Throw '*同名*'
+    }
+
+    It "選択したパスを起動先と履歴の両方に使用する" {
+        Mock Read-Host -ModuleName StartupMenu { '1' }
+        $script:IdentityConfig.tools.codex | Add-Member -NotePropertyName args -NotePropertyValue @()
+        $script:IdentityConfig.recentProjects | Add-Member -NotePropertyName maxHistory -NotePropertyValue 20
+        InModuleScope StartupMenu -Parameters @{ Config = $script:IdentityConfig; Expected = (Join-Path $script:IdentityRoots[1] 'Same') } {
+            param($Config, $Expected)
+            Mock Get-Command { [pscustomobject]@{Name='codex'} } -ParameterFilter { $Name -eq 'codex' }
+            Mock Invoke-InteractiveNativeCommand { 0 }
+            Mock Wait-MenuInput {}
+
+            Invoke-LaunchAction -Config $Config -Tool codex -Mode local -ProjectRoot $TestDrive -LaunchRoot (Split-Path -Parent $Expected)
+
+            Should -Invoke Invoke-InteractiveNativeCommand -Times 1 -Exactly -ParameterFilter { $WorkingDirectory -ceq $Expected }
+            $history = @(Get-RecentProject -HistoryPath $Config.recentProjects.historyFile)
+            $history[0].project | Should -Be $Expected
+        }
+    }
+
+    It "明示BaseDirでは他rootの一覧と履歴を表示しない" {
+        $external = Join-Path $script:IdentityRoots[1] 'Same'
+        Update-RecentProject -ProjectName (Join-Path $script:IdentityRoots[0] 'Same') -Tool codex -Mode local -Result success -HistoryPath $script:IdentityConfig.recentProjects.historyFile
+        Update-RecentProject -ProjectName $external -Tool codex -Mode local -Result success -HistoryPath $script:IdentityConfig.recentProjects.historyFile
+        InModuleScope StartupMenu -Parameters @{ Config = $script:IdentityConfig; Root = $script:IdentityRoots[1]; Expected = $external } {
+            param($Config, $Root, $Expected)
+            Mock Show-ProjectSelector { $AllProjects[0] }
+
+            Select-ProjectInteractive -Config $Config -BaseDir $Root | Should -Be $Expected
+
+            Should -Invoke Show-ProjectSelector -Times 1 -Exactly -ParameterFilter {
+                $AllProjects.Count -eq 1 -and $AllProjects[0] -ceq $Expected -and
+                $RecentProjects.Count -eq 1 -and $RecentProjects[0] -ceq $Expected
+            }
+        }
+    }
+
+    It "Linuxで大文字小文字だけ異なる候補を区別する" {
+        New-Item -ItemType Directory -Path (Join-Path $script:IdentityRoots[0] 'same') -Force | Out-Null
+        InModuleScope StartupMenu -Parameters @{ Config = $script:IdentityConfig; Root = $script:IdentityRoots[0] } {
+            param($Config, $Root)
+            Resolve-StartupProjectIdentity -Config $Config -Project 'same' -BaseDir $Root | Should -BeExactly (Join-Path $Root 'same')
+            Mock Show-ProjectSelector { '' }
+            Select-ProjectInteractive -Config $Config -BaseDir $Root
+            Should -Invoke Show-ProjectSelector -Times 1 -Exactly -ParameterFilter { $AllProjects.Count -eq 2 }
+        }
+    }
+
+    It "同名legacy履歴は再起動対象にせず絶対パス履歴だけを解決する" {
+        $path = Join-Path $script:IdentityRoots[1] 'Same'
+        Update-RecentProject -ProjectName 'Same' -Tool codex -Mode local -Result success -HistoryPath $script:IdentityConfig.recentProjects.historyFile
+        Update-RecentProject -ProjectName $path -Tool codex -Mode local -Result success -HistoryPath $script:IdentityConfig.recentProjects.historyFile
+        $result = @(Get-RecentRestartCandidate -Config $script:IdentityConfig -HistoryPath $script:IdentityConfig.recentProjects.historyFile -WarningAction SilentlyContinue)
+        $result.Count | Should -Be 1
+        $result[0].path | Should -Be $path
+        $result[0].exists | Should -BeTrue
     }
 }
 

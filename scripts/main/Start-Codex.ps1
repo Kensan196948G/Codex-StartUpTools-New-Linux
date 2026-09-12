@@ -54,7 +54,7 @@ function Get-CodexProjectLabel {
         [string]$WorkingDirectory
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($ProjectName)) {
+    if (-not [string]::IsNullOrWhiteSpace($ProjectName) -and -not [System.IO.Path]::IsPathFullyQualified($ProjectName)) {
         return $ProjectName
     }
 
@@ -147,6 +147,9 @@ try {
     }
 
     $configPath = Get-StartupConfigPath -StartupRoot $script:StartupRoot
+    if ($DryRun -and -not (Test-Path $configPath)) {
+        $configPath = Join-Path (Split-Path $configPath -Parent) "config.json.template"
+    }
     $config = Import-LauncherConfig -ConfigPath $configPath
     $toolConfig = $config.tools.codex
     if (-not $toolConfig.enabled) {
@@ -189,7 +192,7 @@ try {
 
     $elapsedMs = [int]((Get-Date) - $startAt).TotalMilliseconds
     if (Test-RecentProjectsEnabled -Config $config) {
-        Update-RecentProject -ProjectName $projectLabel -Tool "codex" -Mode "local" -Result $(if ($exitCode -eq 0) { "success" } else { "failure" }) -ElapsedMs $elapsedMs -HistoryPath $config.recentProjects.historyFile -MaxHistory $config.recentProjects.maxHistory
+        Update-RecentProject -ProjectName ([System.IO.Path]::GetFullPath($workingDirectory)) -Tool "codex" -Mode "local" -Result $(if ($exitCode -eq 0) { "success" } else { "failure" }) -ElapsedMs $elapsedMs -HistoryPath $config.recentProjects.historyFile -MaxHistory $config.recentProjects.maxHistory
     }
 
     exit $exitCode

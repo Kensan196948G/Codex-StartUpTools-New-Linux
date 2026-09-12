@@ -18,6 +18,22 @@ Describe "Get-RecentProject" {
 }
 
 Describe "Update-RecentProject" {
+    It "大小文字が異なる<Kind>を別履歴として保持する" -ForEach @(
+        @{ Kind = '絶対パス'; First = '/projects/Alpha'; Second = '/projects/alpha' },
+        @{ Kind = 'プロジェクト名'; First = 'Alpha'; Second = 'alpha' }
+    ) {
+        $path = Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + '.json')
+        Update-RecentProject -ProjectName $First -Tool codex -Mode local -HistoryPath $path
+        Update-RecentProject -ProjectName $Second -Tool codex -Mode local -HistoryPath $path
+        Update-RecentProject -ProjectName $First -Tool codex -Mode local -HistoryPath $path
+
+        $result = @(Get-RecentProject -HistoryPath $path)
+
+        $result.Count | Should -Be 2
+        $result[0].project | Should -BeExactly $First
+        $result[1].project | Should -BeExactly $Second
+    }
+
     It "新規履歴を作成する" {
         $path = Join-Path $TestDrive "new\recent.json"
         Update-RecentProject -ProjectName "Alpha" -Tool "codex" -Mode "local" -HistoryPath $path
