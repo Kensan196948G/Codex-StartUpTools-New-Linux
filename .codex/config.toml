@@ -13,6 +13,15 @@ source_repo = "https://github.com/Kensan196948G/Codex-StartUpTools-New-Windows.g
 name = "Codex-StartUpTools-New-Linux"
 purpose = "Linux Codex startup tools with registered project supervision"
 
+# Codex ネイティブ Goal (features.goals) のトークン上限。
+# 既定値 500000 の根拠: 2026-09 の実測で、予算未設定の自律 Goal 2 件が
+# 349,763 / 367,363 トークンを消費したまま blocked で停止した。上限が無いと
+# 暴走を止められないため、実測最大 + 約 36% の余裕を残した値とする。
+# 上限到達時、Codex は budget_limited として新規作業を止め、
+# 進捗要約と次アクション提示へ切り替える (安全な停止)。
+[goals]
+max_goal_token_budget = 500000
+
 [shell_environment_policy]
 inherit = "core"
 

@@ -12,6 +12,7 @@
 | ⚙️ | `config/config.json.template` | Linux / Codex only の既定設定 |
 | 🧪 | `tests/unit` | MVP機能の回帰防止 |
 | 🏗️ | `scripts/lib/ArchitectureCheck.psm1` | スクリプト構造の品質ゲート |
+| 🎯 | `scripts/lib/CodexGoalClient.psm1` | Codex ネイティブ Goal の非対話クライアント（app-server RPC） |
 | 🧾 | `docs/releases/` | リリースごとの運用記録 |
 
 ## ✅ 現在のスコープ
@@ -28,6 +29,7 @@
 | ✅ | リリース前チェック | Pester / Architecture / DryRun / README / Git状態を統合確認 |
 | ✅ | GitHub PR確認 | Draft PR / CI / gh auth を確認。作成は明示実行 |
 | ✅ | 最近プロジェクト再起動 | Codex履歴から番号選択で再起動 |
+| ✅ | Codex ネイティブ Goal | `Invoke-CodexGoal.ps1` で非対話に Goal 設定/取得/削除。`[goals] max_goal_token_budget = 500000` で予算を既定化 |
 | 🚫 | SSH接続 | 削除。ローカルプロジェクト起動のみ |
 | 🚫 | Claude / Copilot起動 | 対象外 |
 | 🤖 | 通常PRのmerge | 品質ゲート充足で `gh pr merge --auto --squash`（`AGENTS.md` §6 / `GITHUB_POLICY.md`） |
@@ -272,6 +274,39 @@ pwsh scripts/main/Start-CodexBootstrap.ps1 -DryRun
 `registeredProjects.roots` の既定値は `/home/kensan/Projects/Mirai-Project` と `/home/kensan/Projects/Mirai-DX-Project` です。
 社内DXプロジェクトは `Mirai-Project`、社外DXプロジェクトは `Mirai-DX-Project` として分離管理し、
 各ルート直下のフォルダが登録プロジェクト候補として扱われます。
+
+## 🎯 Codex ネイティブ Goal の非対話操作
+
+Codex には `/goal`（`features.goals`、stable・既定 ON）があり、Goal を永続化して
+ターンをまたいで自動継続します。ただし `codex exec` に `--goal` フラグが無いため、
+非対話・cron・CI から扱うには `codex app-server` の JSON-RPC を使う必要があります。
+`scripts/main/Invoke-CodexGoal.ps1` はその薄い CLI です。
+
+```bash
+# 検証のみ（RPC を呼ばない。4,000 字上限の確認）
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action validate -Objective "CI を緑にして PR を作成する"
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action validate -Template /path/to/goals/deep-debug.md
+
+# 新規スレッド + Goal 設定
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action start -Template /path/to/goals/deep-debug.md
+
+# 既存スレッドの Goal 取得 / 更新 / 削除
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action get   -ThreadId <thread-id>
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action set   -ThreadId <thread-id> -Objective "..."
+pwsh scripts/main/Invoke-CodexGoal.ps1 -Action clear -ThreadId <thread-id>
+```
+
+終了コード: `0` 成功 / `1` 引数・実行エラー / `2` objective が不正（空 or 4,000 字超）。
+
+予算は `.codex/config.toml` の `[goals] max_goal_token_budget = 500000` が
+**tokenBudget 未指定の Goal に自動で入る既定値**です（実測確認済み）。
+
+> ⚠️ `-Action start` はスレッドと Goal を**登録**しますが、駆動はしません。
+> 自動継続はスレッドが app-server にロードされている間だけ働くため、
+> `codex resume <thread-id>` で接続してください。
+
+設計上の制約（スレッド所有権・`active writer`・予算の意味）は
+`docs/migration/codex-native-goal.md` に記録しています。
 
 ## 🧪 検証コマンド
 
