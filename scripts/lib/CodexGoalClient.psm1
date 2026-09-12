@@ -281,6 +281,7 @@ function New-CodexGoalSession {
 
     try {
         [void]$process.Start()
+        $stderrDrain = $process.StandardError.BaseStream.CopyToAsync([System.IO.Stream]::Null)
     }
     catch {
         $process.Dispose()
@@ -294,6 +295,8 @@ function New-CodexGoalSession {
         WorkingDirectory = $WorkingDirectory
         Initialized      = $false
         PendingEvents    = New-Object System.Collections.Generic.List[string]
+        PendingRead      = $null
+        StderrDrain      = $stderrDrain
     }
 
     return $session
@@ -355,11 +358,15 @@ function Invoke-CodexGoalSessionRpc {
         [int]$TimeoutSec = $script:DefaultRpcTimeoutSec
     )
 
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
     if (-not $Session.Initialized -and $Method -ne "initialize") {
         [void](Invoke-CodexGoalSessionRpc -Session $Session -Method "initialize" `
                 -Parameters @{ clientInfo = @{ name = $script:RpcClientName; version = "1.0" } } -TimeoutSec $TimeoutSec)
     }
 
+    if ((Get-Date) -ge $deadline) {
+        throw "timeout waiting for codex app-server response (method=$Method)"
+    }
     $Session.NextId = [int]$Session.NextId + 1
     $id = [int]$Session.NextId
     $frame = New-CodexGoalRpcRequest -Id $id -Method $Method -Parameters $Parameters
@@ -368,7 +375,6 @@ function Invoke-CodexGoalSessionRpc {
 
     if ($Method -eq "initialize") { $Session.Initialized = $true }
 
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         $remaining = [int][math]::Max(1, ($deadline - (Get-Date)).TotalSeconds)
         $line = Read-CodexGoalSessionStdoutLine -Session $Session -TimeoutSec $remaining
@@ -403,8 +409,16 @@ function Read-CodexGoalSessionStdoutLine {
         [int]$TimeoutSec = $script:DefaultRpcTimeoutSec
     )
 
-    $task = $Session.Process.StandardOutput.ReadLineAsync()
+    if (-not (Test-CodexPropertyExists -InputObject $Session -Name "PendingRead")) {
+        $Session | Add-Member -NotePropertyName PendingRead -NotePropertyValue $null
+    }
+    # タイムアウト後も同じ読み取りを保持し、並行読み取りと通知の消失を防ぐ。
+    if ($null -eq $Session.PendingRead) {
+        $Session.PendingRead = $Session.Process.StandardOutput.ReadLineAsync()
+    }
+    $task = $Session.PendingRead
     if (-not $task.Wait([math]::Max(1, $TimeoutSec) * 1000)) { return $null }
+    $Session.PendingRead = $null
     return $task.Result
 }
 
@@ -804,22 +818,27 @@ function Invoke-CodexGoalRun {
     $turns = New-Object System.Collections.Generic.List[object]
     $session = $null
     $threadId = $null
+    $deadline = (Get-Date).AddMinutes($MaxMinutes)
+    $remainingTimeout = {
+        param([int]$Limit)
+        $remaining = ($deadline - (Get-Date)).TotalSeconds
+        if ($remaining -le 0) { throw "goal run time limit reached" }
+        return [int][math]::Min($Limit, [math]::Ceiling($remaining))
+    }
 
     try {
         $session = New-CodexGoalSession -CodexCommand $CodexCommand -WorkingDirectory $WorkingDirectory
 
         $startResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/start" `
-            -Parameters @{ cwd = $WorkingDirectory } -TimeoutSec 60
+            -Parameters @{ cwd = $WorkingDirectory } -TimeoutSec (& $remainingTimeout 60)
         $thread = Get-CodexGoalPropertySafe -InputObject $startResult -Name "thread"
         if ($null -eq $thread -or -not $thread.id) { throw "thread/start did not return a thread id" }
         $threadId = $thread.id
 
         $goal = Set-CodexThreadGoalInternal -Session $session -ThreadId $threadId -Objective $Objective `
             -Status "active" -TokenBudget $TokenBudget -HasTokenBudget:$PSBoundParameters.ContainsKey("TokenBudget") `
-            -TimeoutSec 60
+            -TimeoutSec (& $remainingTimeout 60)
         $status = [string](Get-CodexGoalPropertySafe -InputObject $goal -Name "status")
-
-        $deadline = (Get-Date).AddMinutes($MaxMinutes)
 
         for ($turn = 1; $turn -le $MaxTurns; $turn++) {
             if ($status -in $terminal) { break }
@@ -828,14 +847,19 @@ function Invoke-CodexGoalRun {
             $text = if ($turn -eq 1) { $Objective } else { $ContinuationPrompt }
             [void](Invoke-CodexGoalSessionRpc -Session $session -Method "turn/start" `
                     -Parameters @{ threadId = $threadId; input = @(@{ type = "text"; text = $text }) } `
-                    -TimeoutSec 60)
+                    -TimeoutSec (& $remainingTimeout 60))
 
-            $wait = Wait-CodexGoalTurnCompleted -Session $session -TimeoutSec $TurnTimeoutSec
+            if ((Get-Date) -ge $deadline) { break }
+            $wait = Wait-CodexGoalTurnCompleted -Session $session -TimeoutSec (& $remainingTimeout $TurnTimeoutSec)
 
-            $statusResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/goal/get" `
-                -Parameters @{ threadId = $threadId } -TimeoutSec 60
-            $currentGoal = Get-CodexGoalPropertySafe -InputObject $statusResult -Name "goal"
-            if ($null -eq $currentGoal) { $currentGoal = $statusResult }
+            $currentGoal = if ($wait.Goal) { $wait.Goal } else { $goal }
+            if ((Get-Date) -lt $deadline) {
+                $statusResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/goal/get" `
+                    -Parameters @{ threadId = $threadId } -TimeoutSec (& $remainingTimeout 60)
+                $currentGoal = Get-CodexGoalPropertySafe -InputObject $statusResult -Name "goal"
+                if ($null -eq $currentGoal) { $currentGoal = $statusResult }
+            }
+            $goal = $currentGoal
             $status = [string](Get-CodexGoalPropertySafe -InputObject $currentGoal -Name "status")
 
             $record = [pscustomobject]@{
@@ -854,10 +878,10 @@ function Invoke-CodexGoalRun {
             if ($wait.TimedOut) { break }
         }
 
-        $finalGoal = $null
-        if ($threadId) {
+        $finalGoal = $goal
+        if ($threadId -and (Get-Date) -lt $deadline) {
             $finalResult = Invoke-CodexGoalSessionRpc -Session $session -Method "thread/goal/get" `
-                -Parameters @{ threadId = $threadId } -TimeoutSec 60
+                -Parameters @{ threadId = $threadId } -TimeoutSec (& $remainingTimeout 60)
             $finalGoal = Get-CodexGoalPropertySafe -InputObject $finalResult -Name "goal"
             if ($null -eq $finalGoal) { $finalGoal = $finalResult }
         }

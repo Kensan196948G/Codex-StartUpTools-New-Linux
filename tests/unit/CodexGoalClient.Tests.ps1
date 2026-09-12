@@ -2,6 +2,48 @@ $script:RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Import-Module (Join-Path $script:RepoRoot "scripts/lib/CodexGoalClient.psm1") -Force
 
 InModuleScope CodexGoalClient {
+    Describe "Goal セッションの実ストリーム回帰" {
+        It "無音でタイムアウトしても保留中の読み取りを再利用する" {
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo.FileName = "/bin/sh"
+            $process.StartInfo.ArgumentList.Add("-c")
+            $process.StartInfo.ArgumentList.Add("sleep 2; printf 'ready\n'")
+            $process.StartInfo.UseShellExecute = $false
+            $process.StartInfo.RedirectStandardOutput = $true
+            [void]$process.Start()
+            $session = [pscustomobject]@{ Process = $process; PendingRead = $null }
+            try {
+                Read-CodexGoalSessionStdoutLine -Session $session -TimeoutSec 1 | Should -BeNullOrEmpty
+                $pending = $session.PendingRead
+                $pending | Should -Not -BeNullOrEmpty
+                Read-CodexGoalSessionStdoutLine -Session $session -TimeoutSec 5 | Should -Be "ready"
+                $pending.IsCompleted | Should -BeTrue
+                $session.PendingRead | Should -BeNullOrEmpty
+            }
+            finally {
+                if (-not $process.HasExited) { $process.Kill() }
+                $process.Dispose()
+            }
+        }
+
+        It "大量の stderr を保存や出力せず排出して stdout を読める" {
+            $command = Join-Path $TestDrive "fake-codex"
+            @'
+#!/bin/sh
+head -c 1048576 /dev/zero >&2
+printf 'ready\n'
+'@ | Set-Content -LiteralPath $command -Encoding utf8NoBOM
+            & chmod +x $command
+            $session = New-CodexGoalSession -CodexCommand $command
+            try {
+                Read-CodexGoalSessionStdoutLine -Session $session -TimeoutSec 5 | Should -Be "ready"
+                $session.StderrDrain.Wait(5000) | Should -BeTrue
+                $session.StderrDrain.IsCompletedSuccessfully | Should -BeTrue
+            }
+            finally { Close-CodexGoalSession -Session $session }
+        }
+    }
+
     Describe "Get-CodexGoalObjectiveMaxLength" {
         It "Codex 仕様の 4000 文字を返す" {
             Get-CodexGoalObjectiveMaxLength | Should -Be 4000
@@ -416,6 +458,35 @@ InModuleScope CodexGoalClient {
             $r.Turns.Count | Should -Be 3
             $r.StopReason | Should -Be "max-turns"
             $r.FinalStatus | Should -Be "active"
+        }
+
+        It "残り時間でターン待機を制限し期限後の RPC を送らない" {
+            $script:clock = [datetime]"2026-01-01T00:00:00Z"
+            Mock Get-Date { $script:clock }
+            Mock Invoke-CodexGoalSessionRpc {
+                param($Session, $Method, $Parameters, $TimeoutSec)
+                switch ($Method) {
+                    "thread/start" {
+                        $script:clock = $script:clock.AddSeconds(40)
+                        return @{ thread = @{ id = "deadline-thread" } }
+                    }
+                    "thread/goal/set" { return @{ goal = @{ status = "active" } } }
+                    "turn/start" { return @{} }
+                    "thread/goal/get" { throw "期限後に RPC を送信しました" }
+                }
+            }
+            Mock Wait-CodexGoalTurnCompleted {
+                param($Session, $TimeoutSec)
+                $script:clock = $script:clock.AddSeconds($TimeoutSec)
+                return @{ TurnCompleted = $false; TimedOut = $true; Goal = $null }
+            }
+            $result = Invoke-CodexGoalRun -Objective "deadline" -MaxMinutes 1
+            $result.StopReason | Should -Be "time-limit"
+            $result.FinalStatus | Should -Be "active"
+            Should -Invoke Wait-CodexGoalTurnCompleted -Times 1 -ParameterFilter { $TimeoutSec -eq 20 }
+            Should -Invoke Invoke-CodexGoalSessionRpc -Times 1 -ParameterFilter { $Method -eq "thread/goal/set" -and $TimeoutSec -eq 20 }
+            Should -Invoke Invoke-CodexGoalSessionRpc -Times 1 -ParameterFilter { $Method -eq "turn/start" -and $TimeoutSec -eq 20 }
+            Should -Invoke Invoke-CodexGoalSessionRpc -Times 0 -ParameterFilter { $Method -eq "thread/goal/get" }
         }
 
         It "blocked も終端として扱う" {

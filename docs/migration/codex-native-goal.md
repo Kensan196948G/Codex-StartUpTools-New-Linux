@@ -134,6 +134,12 @@ app-server 単体では Goal は回らない（TUI 側の idle 継続に依存�
 終端 status（`complete` / `blocked` / `usageLimited` / `budgetLimited`）または
 `MaxTurns` / `MaxMinutes` / turn タイムアウトで停止する。
 
+`MaxMinutes` はセッション準備開始から計測し、各 RPC とターン待機には残時間を
+上限として渡す。期限到達後は追加の状態取得 RPC を送らず、最後に確認した Goal を返す。
+タイムアウト指定は秒単位で切り上げるため最大約 1 秒の差があり、終了処理の待機時間は別途必要になる。
+stdout の読み取りは無音時にも未完了 Task を保持し、次の待機で再利用する。
+stderr は非同期で破棄し、パイプの詰まりを防ぐ。内容は保存・表示しない。
+
 継続プロンプトは Codex ネイティブの継続指示と同じ規律（目的を縮小しない / 証拠で判断 /
 progress と verified wait の区別 / 3 ターン連続の同一ブロッカーで blocked）を外部から与える。
 `Get-CodexGoalContinuationPrompt` がそれを生成する。
