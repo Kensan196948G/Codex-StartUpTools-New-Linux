@@ -507,6 +507,25 @@ printf 'ready\n'
             $r.Turns.Count | Should -Be 1
         }
 
+        It "外部監視で paused になったら次のターンを送らない" {
+            Mock Invoke-CodexGoalSessionRpc -MockWith {
+                param($Session, $Method, $Parameters, $TimeoutSec)
+                switch ($Method) {
+                    "thread/start" { return [pscustomobject]@{ thread = [pscustomobject]@{ id = "th-paused" } } }
+                    "thread/goal/set" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "active" } } }
+                    "turn/start" { return [pscustomobject]@{} }
+                    "thread/goal/get" { return [pscustomobject]@{ goal = [pscustomobject]@{ status = "paused" } } }
+                }
+            }
+            Mock Wait-CodexGoalTurnCompleted -MockWith { [pscustomobject]@{ TurnCompleted = $true; TimedOut = $false; GoalStatus = "paused"; Goal = $null; Events = @() } }
+
+            $result = Invoke-CodexGoalRun -Objective "o" -WorkingDirectory "/tmp" -MaxTurns 3
+            $result.FinalStatus | Should -Be "paused"
+            $result.StopReason | Should -Be "goal-paused"
+            $result.Turns.Count | Should -Be 1
+            Should -Invoke Invoke-CodexGoalSessionRpc -Times 1 -Exactly -ParameterFilter { $Method -eq "turn/start" }
+        }
+
         It "例外が出てもセッションを必ず閉じる" {
             Mock Invoke-CodexGoalSessionRpc -MockWith { throw "rpc boom" }
             { Invoke-CodexGoalRun -Objective "o" -WorkingDirectory "/tmp" } | Should -Throw "*rpc boom*"

@@ -814,7 +814,8 @@ function Invoke-CodexGoalRun {
         throw "invalid goal objective ($($check.Reason), length=$($check.Length), max=$script:GoalObjectiveMaxLength)"
     }
 
-    $terminal = Get-CodexGoalTerminalStatuses
+    # paused は再開可能だが、このドライバから継続ターンを送ってはならない。
+    $stopStatuses = @(Get-CodexGoalTerminalStatuses) + @("paused")
     $turns = New-Object System.Collections.Generic.List[object]
     $session = $null
     $threadId = $null
@@ -841,7 +842,7 @@ function Invoke-CodexGoalRun {
         $status = [string](Get-CodexGoalPropertySafe -InputObject $goal -Name "status")
 
         for ($turn = 1; $turn -le $MaxTurns; $turn++) {
-            if ($status -in $terminal) { break }
+            if ($status -in $stopStatuses) { break }
             if ((Get-Date) -ge $deadline) { break }
 
             $text = if ($turn -eq 1) { $Objective } else { $ContinuationPrompt }
@@ -887,7 +888,7 @@ function Invoke-CodexGoalRun {
         }
 
         $finalStatus = if ($finalGoal) { [string](Get-CodexGoalPropertySafe -InputObject $finalGoal -Name "status") } else { $status }
-        $stopReason = if ($finalStatus -in $terminal) { "goal-$finalStatus" }
+        $stopReason = if ($finalStatus -in $stopStatuses) { "goal-$finalStatus" }
         elseif ((Get-Date) -ge $deadline) { "time-limit" }
         elseif ($turns.Count -ge $MaxTurns) { "max-turns" }
         else { "turn-timeout" }
