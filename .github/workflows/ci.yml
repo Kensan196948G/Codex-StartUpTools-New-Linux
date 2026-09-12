@@ -25,6 +25,10 @@ jobs:
           Set-PSRepository PSGallery -InstallationPolicy Trusted
           Install-Module Pester -MinimumVersion 5.0 -Force -SkipPublisherCheck
 
+      - name: Run weekly quota guard tests
+        shell: bash
+        run: python3 -B -m unittest discover -s tests/python -v
+
       - name: Run Unit Tests
         shell: pwsh
         run: |
