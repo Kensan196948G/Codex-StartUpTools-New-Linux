@@ -368,6 +368,40 @@ $r.LiveAllowed # 既定は $false
   `max_list_cost` に相当するものが公式docに無い）。予算統制は API ではなく
   ローカルゲートで行います。詳細は `docs/migration/openai-agents-api-dryrun.md`。
 
+## 🗄️ オーケストレーション制御プレーン（ローカルPostgreSQL, Phase 1）
+
+Task／Run／Approval／Audit などの内部運用状態を、外部公開Webサービスの本番基盤
+（Cloudflare Pages／Workers）とは別レイヤーとして、ローカル（自己ホスト）PostgreSQL
+に保存する制御プレーンの基盤実装です。方針の詳細は `AGENTS.md`/`CLAUDE.md` §11、
+仕様は `docs/architecture/local-postgresql-control-plane.md` を参照してください。
+
+- 接続情報は環境変数 `ORCHESTRATION_PG_DSN` から取得します（未設定時は自動的に
+  File Fallback へ切り替わり、`logs/orchestration/*.jsonl` へ追記します）
+- 接続文字列そのものはリポジトリ・ログ・PRへ一切出力しません
+
+```bash
+# 接続状態の確認（未設定でも安全に実行できる）
+pwsh -NoProfile -File scripts/main/Test-OrchestrationHealth.ps1
+
+# migration の dry-run（適用予定/適用済みの一覧のみ表示）
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationMigration.ps1 -DryRun
+
+# migration の適用（ORCHESTRATION_PG_DSN 設定時のみ有効）
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationMigration.ps1
+```
+
+| モジュール | 役割 |
+|---|---|
+| `scripts/lib/PostgreSqlStore.psm1` | psql CLI経由の接続・Retry・Circuit Breaker・Health Check |
+| `scripts/lib/OrchestrationCommon.psm1` | ID生成・SQLリテラルエスケープ・File Fallback共通処理 |
+| `scripts/lib/OrchestrationRepository.psm1` | Task／Run の記録・取得 |
+| `scripts/lib/ApprovalRepository.psm1` | Human Gate判断の記録 |
+| `scripts/lib/AuditRepository.psm1` | 監査イベントの追記記録 |
+| `scripts/lib/OrchestrationMigration.psm1` | migration適用・Schema Version管理 |
+
+実DB接続（専用DB確定・ユーザー確認後に実施予定）とCodex Goal Shadow Projection
+（`~/.codex/goals_*.sqlite` からの読み取り専用投影）はPhase 2以降の対象です。
+
 ## 🧪 検証コマンド
 
 ```bash

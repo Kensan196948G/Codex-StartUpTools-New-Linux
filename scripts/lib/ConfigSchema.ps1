@@ -224,6 +224,25 @@ function Test-StartupConfigSchema {
         }
     }
 
+    $orchestration = $Config.PSObject.Properties["orchestration"]?.Value
+    if ($null -ne $orchestration) {
+        if ($orchestration.PSObject.Properties["enabled"]?.Value -isnot [bool]) {
+            Add-SchemaError -Errors $errors -Message "orchestration.enabled は boolean である必要があります"
+        }
+        if ($null -ne $orchestration.PSObject.Properties["connectionEnvVar"]?.Value -and $orchestration.PSObject.Properties["connectionEnvVar"]?.Value -isnot [string]) {
+            Add-SchemaError -Errors $errors -Message "orchestration.connectionEnvVar は文字列である必要があります"
+        }
+        $fallback = $orchestration.PSObject.Properties["fallback"]?.Value
+        if ($null -ne $fallback) {
+            if ($null -ne $fallback.PSObject.Properties["mode"]?.Value -and $fallback.PSObject.Properties["mode"]?.Value -isnot [string]) {
+                Add-SchemaError -Errors $errors -Message "orchestration.fallback.mode は文字列である必要があります"
+            }
+            if ($null -ne $fallback.PSObject.Properties["dir"]?.Value -and $fallback.PSObject.Properties["dir"]?.Value -isnot [string]) {
+                Add-SchemaError -Errors $errors -Message "orchestration.fallback.dir は文字列である必要があります"
+            }
+        }
+    }
+
     return @($errors)
 }
 

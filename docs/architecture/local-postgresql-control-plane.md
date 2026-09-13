@@ -44,6 +44,7 @@ Codex内部SQLiteは一次状態として維持し、直接DDLや更新は行わ
 | 環境変数名 | 未確定（placeholder例: `LOCAL_PG_CONNECTION_STRING` / `ORCHESTRATION_PG_DSN`） | 値は `~/.bashrc` 等ホスト側にのみ保持し、リポジトリ・ログ・PR・commitへ出力しない |
 | DB名 | 未確定（placeholder） | 制御プレーン専用DBを分離し、他プロジェクトのDBと共用しない |
 | 参考観測 | 2026-09-12時点でこのホストの `/var/run/postgresql:5432` でPostgreSQL待受を確認済み（`docs/analysis/runtime-readiness-2026-09-12.md`） | DB名・ロール・スキーマは未確定。既存インスタンスを転用するか新規に用意するかは導入時に決定する |
+| 追加観測（2026-09-13） | このホストのPostgreSQLインスタンスは、確認できただけで10件以上の他プロジェクト（社内DX/社外DX相当）が同居する**共有インスタンス**であることを確認した（DB名は本ドキュメントに記載しない） | 専用DBの新規作成・ロール作成はユーザーの明示的指示を得てから行う。他プロジェクトのDB・スキーマには一切触れない |
 
 `config/config.json.template` へ環境変数名のplaceholderを追記するのはPhase 1（実装着手）で行う。
 
@@ -76,20 +77,32 @@ PowerShellから直接PostgreSQLへ接続する方式（Npgsql等）と、ロー
 - 制御プレーンDBの外部公開設定変更
 - 資格情報・接続文字列のrotationや保存場所変更
 
-## 7. 未実装事項（Phase 1以降）
+## 7. 実装状況（2026-09-13, Phase 1）
 
-本ドキュメントはPhase 0（方針・仕様策定）の成果物であり、以下は未実装。
+Phase 1でコード基盤を実装した。実DB（専用DB未確定のためplaceholderのまま）への
+接続検証はまだ行っていない。File Fallback経路のみPester単体テストで検証済み。
 
-- `PostgreSqlStore.psm1` 等の接続クライアント実装
-- Migration CLI
-- Schema Version管理
-- Health Check
-- Codex Goal Projection Adapter（Phase 2）
-- Task／Run／Approval／Audit APIの実装（Phase 3）
+実装済み:
+- `scripts/lib/PostgreSqlStore.psm1`（psql CLI経由の接続・Retry・Circuit Breaker・Health Check）
+- `scripts/lib/OrchestrationCommon.psm1`（ID生成・SQLリテラルエスケープ・File Fallback共通処理）
+- `scripts/lib/OrchestrationRepository.psm1`（Task／Run）
+- `scripts/lib/ApprovalRepository.psm1`（Human Gate判断の記録）
+- `scripts/lib/AuditRepository.psm1`（監査イベントの追記記録）
+- `scripts/lib/OrchestrationMigration.psm1` / `scripts/main/Invoke-OrchestrationMigration.ps1`（migration CLI、Schema Version管理）
+- `scripts/main/Test-OrchestrationHealth.ps1`（Health Check CLI）
+- `db/migrations/0001_init.sql`（初期スキーマ、additive）
+- `config/config.json.template` の `orchestration` セクション（placeholder）
 
-## 8. 検証方法（実装着手時）
+未実装（Phase 2以降）:
+- Codex Goal Projection Adapter（`~/.codex/goals_*.sqlite` からの読み取り専用投影）
+- Task／Run／Approval／Audit の実DB接続検証（専用DB確定後）
+- PgBouncer接続対応
+- Goal Router／Task Queue等のオーケストレーション機能（Phase 3）
 
-- ローカルPostgreSQLへの接続確認（Health Check）
-- migration適用・rollbackの往復確認
-- 破壊的操作がHuman Gateを経由せず実行されないことをテストで確認
-- Codex内部SQLiteへの書き込みが発生しないことを確認（読み取り専用の担保）
+## 8. 検証方法
+
+- ローカルPostgreSQLへの接続確認（Health Check）: `scripts/main/Test-OrchestrationHealth.ps1` で実施済み（未接続時にHealthy=falseを返すことを確認）
+- File Fallback経路: Pester単体テスト（`tests/unit/OrchestrationRepository.Tests.ps1` 等）で検証済み
+- 実DB接続・migration適用・rollbackの往復確認: **未実施**。このホストのPostgreSQLインスタンスは他プロジェクトと共有（§3参照）のため、専用DB確定・ユーザー確認後に実施する
+- 破壊的操作がHuman Gateを経由せず実行されないことの確認: 未実施（Phase 3でHuman Gate統合時に実施）
+- Codex内部SQLiteへの書き込みが発生しないことの確認: 未実施（Phase 2でAdapter実装時に実施）
