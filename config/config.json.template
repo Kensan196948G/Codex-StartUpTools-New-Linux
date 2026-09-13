@@ -59,5 +59,14 @@
     "enabled": true,
     "maxHistory": 20,
     "historyFile": "/home/kensan/.codex-startup/recent-projects.json"
+  },
+  "orchestration": {
+    "_comment": "AGENTS.md/CLAUDE.md §11 ローカルPostgreSQL制御プレーン。値はplaceholder。接続文字列そのものはここに書かず、connectionEnvVarが指す環境変数から取得する",
+    "enabled": false,
+    "connectionEnvVar": "ORCHESTRATION_PG_DSN",
+    "fallback": {
+      "mode": "file",
+      "dir": "logs/orchestration"
+    }
   }
 }
