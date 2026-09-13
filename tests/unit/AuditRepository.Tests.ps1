@@ -10,12 +10,14 @@ Describe "AuditRepository (File Fallback)" {
         New-Item -ItemType Directory -Path $script:TempRoot -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $script:TempRoot ".git") -Force | Out-Null
 
+        $script:OriginalDsn = [System.Environment]::GetEnvironmentVariable("ORCHESTRATION_PG_DSN")
         [System.Environment]::SetEnvironmentVariable("ORCHESTRATION_PG_DSN", $null)
         Reset-PostgreSqlCircuitBreaker
     }
 
     AfterEach {
         Remove-Item -Path $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        [System.Environment]::SetEnvironmentVariable("ORCHESTRATION_PG_DSN", $script:OriginalDsn)
         Reset-PostgreSqlCircuitBreaker
     }
 
@@ -44,5 +46,22 @@ Describe "AuditRepository (File Fallback)" {
 
         $records = @(Get-OrchestrationAuditEvent -TaskId "task-1" -ProjectRoot $script:TempRoot)
         $records.Count | Should -Be 2
+    }
+}
+
+Describe "AuditRepository (実DB接続, Integration)" {
+    BeforeEach {
+        Reset-PostgreSqlCircuitBreaker
+    }
+
+    It "ORCHESTRATION_PG_DSN が設定されていれば監査イベントがpostgresql経由で記録される（id列の型不整合の回帰確認）" -Skip:(-not $env:ORCHESTRATION_PG_DSN) {
+        $taskId = [guid]::NewGuid().ToString()
+        $added = Add-OrchestrationAuditEvent -TaskId $taskId -EventType "integration.test" -Detail @{ note = "phase1" }
+        $added.Ok | Should -BeTrue
+        $added.Source | Should -Be "postgresql"
+
+        $records = @(Get-OrchestrationAuditEvent -TaskId $taskId)
+        $records.Count | Should -Be 1
+        $records[0].EventType | Should -Be "integration.test"
     }
 }

@@ -27,8 +27,10 @@ function Get-OrchestrationMigrationFile {
 
 function Get-OrchestrationAppliedMigration {
     <#
-        戻り値: 適用済みバージョンの配列。接続不可の場合は $null を返す
-        （呼び出し元はこれを「未適用0件」と混同しないこと）。
+        戻り値: [pscustomobject]@{ Ok; Versions }。
+        PowerShellは関数のreturnで空配列を渡すと呼び出し元で$nullにアンラップ
+        されるため、「接続不可（Ok=$false）」と「未適用0件（Ok=$true,Versions=@()）」
+        を区別できるよう、常に構造化オブジェクトで返す。
     #>
     [CmdletBinding()]
     [OutputType([System.Object])]
@@ -36,23 +38,24 @@ function Get-OrchestrationAppliedMigration {
 
     $existsCheck = Invoke-PostgreSqlCommand -Sql "SELECT to_regclass('public.schema_migrations') IS NOT NULL;"
     if (-not $existsCheck.Ok) {
-        return $null
+        return [pscustomobject]@{ Ok = $false; Versions = @() }
     }
 
     if ($existsCheck.Output.Trim() -ne "t") {
-        return @()
+        return [pscustomobject]@{ Ok = $true; Versions = @() }
     }
 
     $listResult = Invoke-PostgreSqlCommand -Sql "SELECT version FROM schema_migrations ORDER BY version;"
     if (-not $listResult.Ok) {
-        return $null
+        return [pscustomobject]@{ Ok = $false; Versions = @() }
     }
 
     if ([string]::IsNullOrWhiteSpace($listResult.Output)) {
-        return @()
+        return [pscustomobject]@{ Ok = $true; Versions = @() }
     }
 
-    return @($listResult.Output.Trim() -split "`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $versions = @($listResult.Output.Trim() -split "`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    return [pscustomobject]@{ Ok = $true; Versions = $versions }
 }
 
 function Invoke-OrchestrationMigrationFile {
@@ -100,15 +103,18 @@ function Invoke-OrchestrationMigration {
     }
 
     $files = Get-OrchestrationMigrationFile
-    $applied = Get-OrchestrationAppliedMigration
-    if ($null -eq $applied) {
+    $appliedResult = Get-OrchestrationAppliedMigration
+    if (-not $appliedResult.Ok) {
         return [pscustomobject]@{ Ok = $false; Reason = "failed to read schema_migrations state"; Applied = @(); Pending = @() }
     }
+    $applied = $appliedResult.Versions
 
     $pending = @($files | Where-Object { $_.Version -notin $applied })
 
+    $pendingVersions = @($pending | ForEach-Object { $_.Version })
+
     if ($DryRun) {
-        return [pscustomobject]@{ Ok = $true; Reason = "dry-run"; Applied = @($applied); Pending = @($pending.Version) }
+        return [pscustomobject]@{ Ok = $true; Reason = "dry-run"; Applied = @($applied); Pending = $pendingVersions }
     }
 
     $newlyApplied = [System.Collections.Generic.List[string]]::new()
@@ -119,7 +125,7 @@ function Invoke-OrchestrationMigration {
                 Ok      = $false
                 Reason  = "failed applying $($file.Version): $($result.Reason)"
                 Applied = @($newlyApplied)
-                Pending = @($pending.Version | Where-Object { $_ -notin $newlyApplied })
+                Pending = @($pendingVersions | Where-Object { $_ -notin $newlyApplied })
             }
         }
         $newlyApplied.Add($file.Version)

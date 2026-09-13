@@ -11,12 +11,14 @@ Describe "OrchestrationRepository (File Fallback)" {
         New-Item -ItemType Directory -Path (Join-Path $script:TempRoot ".git") -Force | Out-Null
 
         # 接続未設定を確実にし、常にFile Fallback経路をテストする。
+        $script:OriginalDsn = [System.Environment]::GetEnvironmentVariable("ORCHESTRATION_PG_DSN")
         [System.Environment]::SetEnvironmentVariable("ORCHESTRATION_PG_DSN", $null)
         Reset-PostgreSqlCircuitBreaker
     }
 
     AfterEach {
         Remove-Item -Path $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        [System.Environment]::SetEnvironmentVariable("ORCHESTRATION_PG_DSN", $script:OriginalDsn)
         Reset-PostgreSqlCircuitBreaker
     }
 
@@ -57,5 +59,26 @@ Describe "OrchestrationRepository (File Fallback)" {
         $updated = Set-OrchestrationRunStatus -Id $run.Id -Status "completed" -Ended -ProjectRoot $script:TempRoot
         $updated.Ok | Should -BeTrue
         $updated.Source | Should -Be "file_fallback"
+    }
+}
+
+Describe "OrchestrationRepository (実DB接続, Integration)" {
+    BeforeEach {
+        Reset-PostgreSqlCircuitBreaker
+    }
+
+    It "ORCHESTRATION_PG_DSN が設定されていればTask/Runの読み書きがpostgresql経由になる" -Skip:(-not $env:ORCHESTRATION_PG_DSN) {
+        $task = Add-OrchestrationTask -TaskType "integration-test"
+        $task.Source | Should -Be "postgresql"
+
+        $fetched = Get-OrchestrationTask -Id $task.Id
+        $fetched.Source | Should -Be "postgresql"
+        $fetched.TaskType | Should -Be "integration-test"
+
+        $run = Add-OrchestrationRun -TaskId $task.Id
+        $run.Source | Should -Be "postgresql"
+
+        $updated = Set-OrchestrationRunStatus -Id $run.Id -Status "completed" -Ended
+        $updated.Source | Should -Be "postgresql"
     }
 }
