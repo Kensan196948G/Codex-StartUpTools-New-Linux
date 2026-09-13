@@ -398,10 +398,18 @@ pwsh -NoProfile -File scripts/main/Invoke-OrchestrationMigration.ps1
 | `scripts/lib/ApprovalRepository.psm1` | Human Gate判断の記録 |
 | `scripts/lib/AuditRepository.psm1` | 監査イベントの追記記録 |
 | `scripts/lib/OrchestrationMigration.psm1` | migration適用・Schema Version管理 |
+| `scripts/lib/CodexGoalProjection.psm1` | Codex Goal Shadow Projection（`~/.codex/goals_*.sqlite` からの読み取り専用投影） |
 
 専用DB `codex_startup_orchestration` ／専用ロール `codex_orchestration_app` を新規作成し、
 migration適用・Task/Run/Approval/Audit書き込みの実DB接続検証まで完了しています。
-Codex Goal Shadow Projection（`~/.codex/goals_*.sqlite` からの読み取り専用投影）はPhase 2以降の対象です。
+
+```bash
+# Codex Goal を codex_goal_projections へ同期（Codex Goal DB不在／PostgreSQL未接続時はOk=falseで縮退）
+pwsh -NoProfile -File scripts/main/Sync-CodexGoal.ps1
+```
+
+Codex内部SQLite（`~/.codex/goals_*.sqlite`）へは一切書き込まず、読み取り専用のまま投影します。
+Goal Router統合・Task Queue・Human Gate統合はPhase 3以降の対象です。
 
 ## 🧪 検証コマンド
 

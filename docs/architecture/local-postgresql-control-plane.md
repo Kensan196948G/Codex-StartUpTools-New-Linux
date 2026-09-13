@@ -97,16 +97,40 @@ Phase 1でコード基盤を実装し、専用DB・ロールを新規作成し�
 - `Set-StrictMode`環境下で空配列に対する`.Property`直接アクセス（member enumeration）がエラーになる箇所があった。パイプライン経由のプロパティ展開に変更して修正
 - `orchestration_audit_events.id`が`BIGSERIAL`のままで、Repository側がUUID文字列を渡す設計と型不整合を起こしていた。DDLを`UUID`に統一して修正
 
-未実装（Phase 2以降）:
-- Codex Goal Projection Adapter（`~/.codex/goals_*.sqlite` からの読み取り専用投影）
+未実装（Phase 3以降）:
 - PgBouncer接続対応
 - Goal Router／Task Queue等のオーケストレーション機能（Phase 3）
 
-## 8. 検証方法・実施結果（2026-09-13）
+## 8. 検証方法・実施結果（2026-09-13, Phase 1）
 
 - ローカルPostgreSQLへの接続確認（Health Check）: `scripts/main/Test-OrchestrationHealth.ps1` で実施。未接続時Healthy=false、接続後Healthy=trueをいずれも確認
 - File Fallback経路: Pester単体テストで検証済み（`ORCHESTRATION_PG_DSN`未設定時）
 - 実DB接続・migration適用・rollbackの往復確認: **実施済み**。dry-run→apply→再dry-run（pending空、冪等性確認）→テーブル作成確認（`\dt`）まで実施
 - Task／Run／Approval／Auditの実DB書き込み: **実施済み**。全リポジトリ関数でSource=postgresqlとなることを確認し、検証データはTRUNCATEで削除済み
 - 破壊的操作がHuman Gateを経由せず実行されないことの確認: 未実施（Phase 3でHuman Gate統合時に実施）
-- Codex内部SQLiteへの書き込みが発生しないことの確認: 未実施（Phase 2でAdapter実装時に実施）
+
+## 9. Codex Goal Shadow Projection（2026-09-13, Phase 2）
+
+`~/.codex/goals_*.sqlite`（`thread_goals`テーブル）からの読み取り専用投影を実装した。
+
+実装済み:
+- `scripts/lib/CodexGoalProjection.psm1`（`Sync-CodexGoalProjection` / `Get-CodexGoalProjection` / `Set-CodexGoalProjectionRecord`）
+- `scripts/main/Sync-CodexGoal.ps1`（同期CLI）
+- `db/migrations/0002_codex_goal_projection.sql`（`codex_goal_projections`テーブル、`thread_id`をPRIMARY KEYとしたUPSERTで重複登録を防止）
+- `scripts/lib/CodexGoalClient.psm1`の`Get-CodexGoalList`/`ConvertFrom-CodexGoalListJson`に`GoalId`を追加（後方互換な拡張。既存のSELECT文に`goal_id`列を追加しただけで、既存呼び出し元の挙動は変えていない）
+
+設計判断（合理的な仮定として決定）:
+- Task/Run/Approval/Auditの汎用テーブルとは別に専用テーブル`codex_goal_projections`を新設した。理由: Goal固有フィールド（token_budget等）を型付きで保持でき、Codex内部状態の投影であることを汎用オーケストレーションデータと明確に区別できるため
+- Codex内部SQLite（`~/.codex/goals_*.sqlite`）への書き込みは一切行わない。`Get-CodexGoalList`（既存の読み取り専用関数）をそのまま呼び出し、投影先（PostgreSQL）への書き込みのみをAdapterが担当する
+- Codex Goal DBが存在しない、またはPostgreSQLが未接続の場合はいずれも例外を投げず、`Ok=$false`で縮退する（`Reason`で原因を区別）
+
+検証結果:
+- Codex Goal DB不在時の縮退動作: 確認済み
+- PostgreSQL未接続時の縮退動作: 確認済み
+- 実DB接続時のUPSERT（新規作成・重複更新）と`Get-CodexGoalProjection`での取得: 確認済み（検証データはTRUNCATE済み）
+- Codex内部SQLiteへの書き込みが発生しないことの確認: `Get-CodexGoalList`は`sqlite3 -readonly` / `sqlite3.connect(..., mode=ro)`を使う既存実装のままであり、本Adapterはこれを呼び出すのみで独自の書き込みロジックを追加していないことをコードレビューで確認
+
+未実装（Phase 3以降）:
+- Goal Router統合（投影結果に基づくルーティング判断）
+- Task Queue、Priority Queue
+- Human Gate統合
