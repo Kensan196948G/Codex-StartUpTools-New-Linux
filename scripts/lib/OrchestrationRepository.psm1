@@ -14,16 +14,18 @@ function Add-OrchestrationTask {
         [hashtable]$Payload = @{},
 
         [string]$Status = "pending",
+        [int]$Priority = 0,
         [string]$ProjectRoot = ""
     )
 
     $id = New-OrchestrationId
     $timestamp = Get-OrchestrationTimestamp
 
-    $sql = "INSERT INTO orchestration_tasks (id, task_type, status, payload, created_at, updated_at) VALUES ({0}, {1}, {2}, {3}, {4}, {4});" -f `
+    $sql = "INSERT INTO orchestration_tasks (id, task_type, status, priority, payload, created_at, updated_at) VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {5});" -f `
         (ConvertTo-PostgreSqlLiteral -Value $id), `
         (ConvertTo-PostgreSqlLiteral -Value $TaskType), `
         (ConvertTo-PostgreSqlLiteral -Value $Status), `
+        [int]$Priority, `
         (ConvertTo-PostgreSqlJsonLiteral -InputObject $Payload), `
         (ConvertTo-PostgreSqlLiteral -Value $timestamp)
 

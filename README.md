@@ -399,6 +399,8 @@ pwsh -NoProfile -File scripts/main/Invoke-OrchestrationMigration.ps1
 | `scripts/lib/AuditRepository.psm1` | 監査イベントの追記記録 |
 | `scripts/lib/OrchestrationMigration.psm1` | migration適用・Schema Version管理 |
 | `scripts/lib/CodexGoalProjection.psm1` | Codex Goal Shadow Projection（`~/.codex/goals_*.sqlite` からの読み取り専用投影） |
+| `scripts/lib/TaskQueue.psm1` | Task Queue（Lease／Heartbeat／Complete／Stale Run回収、PostgreSQL必須） |
+| `scripts/lib/GoalRouterOrchestration.psm1` | 既存Goal Routerの判定結果をAudit Eventとして記録する統合レイヤー |
 
 専用DB `codex_startup_orchestration` ／専用ロール `codex_orchestration_app` を新規作成し、
 migration適用・Task/Run/Approval/Audit書き込みの実DB接続検証まで完了しています。
@@ -409,7 +411,23 @@ pwsh -NoProfile -File scripts/main/Sync-CodexGoal.ps1
 ```
 
 Codex内部SQLite（`~/.codex/goals_*.sqlite`）へは一切書き込まず、読み取り専用のまま投影します。
-Goal Router統合・Task Queue・Human Gate統合はPhase 3以降の対象です。
+
+```bash
+# Task Queue: 1件リース→完了（Worker識別子は任意の文字列）
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationTaskQueue.ps1 -Action Lease -Worker my-worker
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationTaskQueue.ps1 -Action Complete -Id <task-id> -Worker my-worker
+
+# 期限切れリース（Stale Run）をpendingへ回収
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationTaskQueue.ps1 -Action RecoverStale
+
+# Human Gate: 承認待ちを作成し、一覧確認後にY/N相当の判断を記録する
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationHumanGate.ps1 -Action Request -Gate "database-migration" -Reason "..."
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationHumanGate.ps1 -Action ListPending
+pwsh -NoProfile -File scripts/main/Invoke-OrchestrationHumanGate.ps1 -Action Approve -Id <approval-id> -DecidedBy "<user>"
+```
+
+Task QueueとHuman GateはPostgreSQL必須機能です（複数Workerの排他制御・承認待ち状態の安全性のため、File Fallbackは持ちません）。
+`Approve`/`Deny`はユーザーの明示的な回答を得たうえで呼び出す運用が前提です（AGENTS.md/CLAUDE.md §6準拠、詳細は`docs/architecture/local-postgresql-control-plane.md` §10.3）。
 
 ## 🧪 検証コマンド
 
