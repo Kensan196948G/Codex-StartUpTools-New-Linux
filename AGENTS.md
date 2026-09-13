@@ -59,8 +59,9 @@ Monitor → Plan → Development → Verify → Review → Improvement
 - 障害時の安全なrollback
 - リリース後の安定性確認
 
-Cloudflare、Neon、GitHubなど、既に認証・設定済みで対象プロジェクトとの
-対応関係が確認できるサービスは自律実行に使用してよい。
+Cloudflare、GitHubなど、既に認証・設定済みで対象プロジェクトとの
+対応関係が確認できるサービス、および§11のローカルPostgreSQL制御プレーンは
+自律実行に使用してよい。
 
 ## 4. 登録プロジェクト（社内DX / 社外DX）
 
@@ -91,8 +92,11 @@ commit hashで固定されたリリース候補から実行する（組織方針
 - 本番と検証環境の分離
 - 既存ユーザーおよびデータへの影響
 
-Webサービスの本番基盤はCloudflare（Pages／Workers）とNeon PostgreSQLとする。
+Webサービスの本番基盤はCloudflare（Pages／Workers）とする。本番DBは対象プロジェクトの
+要件に応じて選定し、既定ではNeonを前提としない（既定は自己ホスト／ローカルPostgreSQL、
+外部マネージドPostgreSQL採用時は対象サービス名を都度明示する）。
 既定URL（*.pages.dev／*.workers.dev）での先行リリースは自律実行してよい。
+組織方針との関係は§11を参照。
 custom domainまたはサブドメインが必要な場合はユーザーへ入力・選択を求め、
 公開DNSおよびcustom domainの変更自体は§6のApproval PR対象とする。
 
@@ -182,7 +186,7 @@ Supervisor manifest（`.codex/supervisor.json`）の `humanDecisionRequired` は
 
 - .env、資格情報、トークン、秘密鍵、会社データをGitへ追加しない
 - .env.exampleには変数名と安全な例だけを記載する
-- Cloudflare、GitHub、Neon等のSecrets機能を使用する
+- Cloudflare、GitHub等のSecrets機能、または自己ホストPostgreSQLの環境変数管理を使用する
 - MCP等のトークンは設定ファイルに平文で書かず、環境変数参照
   （Codexは `bearer_token_env_var`）を使う
 - 秘密を画面、ログ、テスト結果、PR、commitへ出力しない
@@ -249,6 +253,29 @@ Supervisor manifest（`.codex/supervisor.json`）の `humanDecisionRequired` は
 - 元機能との対応関係
 - Codex 向けの変換メモ
 - 検証方法
+
+## 11. オーケストレーション制御プレーン（ローカルPostgreSQL）
+
+このリポジトリ（およびCodexネイティブGoal実行基盤）が扱うTask／Run／Approval／Audit等の
+内部運用状態は、§5のWebサービス本番基盤（Cloudflare Pages／Workers）とは別レイヤーとして、
+自己ホスト・ローカルPostgreSQLに保存する。
+
+- 対象データ: Task、Run、Approval、Audit Event、Codex Goal Projection等のオーケストレーション状態
+- 接続情報: 値そのものはリポジトリへ記載せず、環境変数参照とする。変数名・接続方式は導入時に
+  確定し、`config/config.json.template` 等へplaceholderとして記録する
+- Codex内部状態（`~/.codex/goals_*.sqlite`）は読み取り専用のShadow Projection元として扱い、
+  直接DDLや更新は行わない
+- スキーマ変更はmigrationとして管理し、additiveかつ後方互換を既定とする
+- 破壊的操作（drop／delete／reset／本番データ削除）はHuman Gate対象とする（§7・§8準拠）
+- PostgreSQLは外部公開しない
+- 詳細仕様: `docs/architecture/local-postgresql-control-plane.md`
+
+既知の制約: 組織方針（`/etc/claude-code/CLAUDE.md` §4）は「Webサービスの本番基盤は
+Cloudflare（Pages／Workers）とNeon PostgreSQL」と定めており、これは本ファイルより優先される
+最上位方針である。§5からNeonを既定前提として外した本ファイルの記述は、この組織方針と
+文言上矛盾したまま残る。外部公開Webサービスの本番DBを実際に選定する場面では、Neon
+PostgreSQLを含めて都度ユーザーに確認すること。矛盾の詳細と背景は
+`docs/analysis/local-postgresql-orchestration-policy-conflict.md` を参照。
 
 <!-- central-github-policy -->
 ## GitHub運用ポリシー（中央配布）
