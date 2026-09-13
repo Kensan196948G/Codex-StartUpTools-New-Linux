@@ -10,12 +10,14 @@ Describe "ApprovalRepository (File Fallback)" {
         New-Item -ItemType Directory -Path $script:TempRoot -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $script:TempRoot ".git") -Force | Out-Null
 
+        $script:OriginalDsn = [System.Environment]::GetEnvironmentVariable("ORCHESTRATION_PG_DSN")
         [System.Environment]::SetEnvironmentVariable("ORCHESTRATION_PG_DSN", $null)
         Reset-PostgreSqlCircuitBreaker
     }
 
     AfterEach {
         Remove-Item -Path $script:TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        [System.Environment]::SetEnvironmentVariable("ORCHESTRATION_PG_DSN", $script:OriginalDsn)
         Reset-PostgreSqlCircuitBreaker
     }
 
@@ -41,5 +43,17 @@ Describe "ApprovalRepository (File Fallback)" {
 
         $records = @(Get-OrchestrationApproval -ProjectRoot $script:TempRoot)
         $records.Count | Should -Be 2
+    }
+}
+
+Describe "ApprovalRepository (実DB接続, Integration)" {
+    BeforeEach {
+        Reset-PostgreSqlCircuitBreaker
+    }
+
+    It "ORCHESTRATION_PG_DSN が設定されていればApprovalがpostgresql経由で記録される" -Skip:(-not $env:ORCHESTRATION_PG_DSN) {
+        $added = Add-OrchestrationApproval -Gate "integration-test-gate" -Decision "approved" -DecidedBy "pester"
+        $added.Ok | Should -BeTrue
+        $added.Source | Should -Be "postgresql"
     }
 }

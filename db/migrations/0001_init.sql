@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS orchestration_approvals (
 );
 
 CREATE TABLE IF NOT EXISTS orchestration_audit_events (
-    id          BIGSERIAL PRIMARY KEY,
+    id          UUID PRIMARY KEY,
     task_id     UUID,
     run_id      UUID,
     event_type  TEXT NOT NULL,

@@ -399,8 +399,9 @@ pwsh -NoProfile -File scripts/main/Invoke-OrchestrationMigration.ps1
 | `scripts/lib/AuditRepository.psm1` | 監査イベントの追記記録 |
 | `scripts/lib/OrchestrationMigration.psm1` | migration適用・Schema Version管理 |
 
-実DB接続（専用DB確定・ユーザー確認後に実施予定）とCodex Goal Shadow Projection
-（`~/.codex/goals_*.sqlite` からの読み取り専用投影）はPhase 2以降の対象です。
+専用DB `codex_startup_orchestration` ／専用ロール `codex_orchestration_app` を新規作成し、
+migration適用・Task/Run/Approval/Audit書き込みの実DB接続検証まで完了しています。
+Codex Goal Shadow Projection（`~/.codex/goals_*.sqlite` からの読み取り専用投影）はPhase 2以降の対象です。
 
 ## 🧪 検証コマンド
 
