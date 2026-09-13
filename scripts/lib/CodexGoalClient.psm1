@@ -946,6 +946,7 @@ function ConvertFrom-CodexGoalListJson {
         if ($null -eq $row) { continue }
         $out += [pscustomobject]@{
             ThreadId        = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "thread_id")
+            GoalId          = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "goal_id")
             Status          = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "status")
             Objective       = [string](Get-CodexGoalPropertySafe -InputObject $row -Name "objective")
             TokenBudget     = Get-CodexGoalPropertySafe -InputObject $row -Name "token_budget"
@@ -976,7 +977,7 @@ function Get-CodexGoalList {
         return [pscustomobject]@{ Available = $false; Reason = "goals-db-not-found"; DatabasePath = $dbPath; Goals = @() }
     }
 
-    $query = "SELECT thread_id,status,objective,token_budget,tokens_used,time_used_seconds,updated_at_ms FROM thread_goals ORDER BY updated_at_ms DESC"
+    $query = "SELECT thread_id,goal_id,status,objective,token_budget,tokens_used,time_used_seconds,updated_at_ms FROM thread_goals ORDER BY updated_at_ms DESC"
     $json = $null
     $tool = $null
 
@@ -985,7 +986,7 @@ function Get-CodexGoalList {
 import json,sqlite3,sys
 try:
     c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)
-    rows=[dict(zip(['thread_id','status','objective','token_budget','tokens_used','time_used_seconds','updated_at_ms'],r))
+    rows=[dict(zip(['thread_id','goal_id','status','objective','token_budget','tokens_used','time_used_seconds','updated_at_ms'],r))
           for r in c.execute(sys.argv[2])]
     print(json.dumps(rows,ensure_ascii=False))
 except Exception:
